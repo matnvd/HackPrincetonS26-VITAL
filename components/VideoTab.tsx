@@ -152,10 +152,11 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
   const processingRef   = useRef(false);
   const intervalRef     = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const [camState, setCamState] = useState<"idle" | "active" | "analyzing" | "error">("idle");
+  const [camState, setCamState]       = useState<"idle" | "active" | "analyzing" | "error">("idle");
   const [isCapturing, setIsCapturing] = useState(false);
   const [frameCount, setFrameCount]   = useState(0);
   const [errorMsg, setErrorMsg]       = useState("");
+  const [lastError, setLastError]     = useState("");
 
   const startCamera = async () => {
     try {
@@ -195,26 +196,37 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
     return canvas.toDataURL("image/jpeg", 0.88);
   };
 
+  const runDetection = async () => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    setLastError("");
+    try {
+      const base64 = captureFrame();
+      if (!base64) throw new Error("Frame capture returned empty — camera may not be ready.");
+      const people = await detectPeople(base64);
+      onFrameAnalyzed(people, base64);
+      setFrameCount((n) => n + 1);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      console.error("Live detection error:", err);
+      setLastError(msg);
+    } finally {
+      processingRef.current = false;
+    }
+  };
+
   const startCapture = () => {
-    onAnalysisStart();
     setIsCapturing(true);
     setCamState("analyzing");
+    setLastError("");
 
-    intervalRef.current = setInterval(async () => {
-      if (processingRef.current) return;
-      processingRef.current = true;
-      try {
-        const base64 = captureFrame();
-        if (!base64) return;
-        const people = await detectPeople(base64);
-        onFrameAnalyzed(people, base64);
-        setFrameCount((n) => n + 1);
-      } catch (err) {
-        console.error("Live detection error:", err);
-      } finally {
-        processingRef.current = false;
-      }
-    }, 4000);
+    // Fire immediately so the user doesn't wait 4 seconds for the first result
+    runDetection();
+
+    intervalRef.current = setInterval(runDetection, 4000);
+
+    // Switch to dashboard so they can watch patients populate
+    onAnalysisStart();
   };
 
   const stopCapture = () => {
@@ -297,7 +309,15 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
       </div>
 
       {camState === "analyzing" && (
-        <p className="text-gray-600 text-xs">Analyzing a frame every 4 seconds · results update on the Dashboard tab</p>
+        <p className="text-gray-600 text-xs">
+          Analyzing a frame every 4 s · patients appear on the Dashboard tab
+        </p>
+      )}
+
+      {lastError && (
+        <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs">
+          {lastError}
+        </div>
       )}
     </div>
   );

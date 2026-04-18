@@ -77,16 +77,17 @@ export default function App() {
         ))}
       </nav>
 
-      {/* Tab content */}
+      {/* Tab content — both stay mounted so the live camera interval survives tab switches */}
       <main className="flex-1 max-w-2xl w-full mx-auto px-4 py-8">
-        {tab === "dashboard" ? (
+        <div className={tab !== "dashboard" ? "hidden" : ""}>
           <Dashboard patients={patients} onConfirm={handleConfirm} />
-        ) : (
+        </div>
+        <div className={tab !== "video" ? "hidden" : ""}>
           <VideoTab
             onFrameAnalyzed={handleFrameAnalyzed}
             onAnalysisStart={handleAnalysisStart}
           />
-        )}
+        </div>
       </main>
     </div>
   );
