@@ -5,6 +5,7 @@ import Dashboard from "@/components/Dashboard";
 import VideoTab from "@/components/VideoTab";
 import ApiKeySettings from "@/components/ApiKeySettings";
 import { mergePatients } from "@/lib/patientStore";
+import { getDemoPatients } from "@/lib/demoPatients";
 import type { Patient, DetectedPerson } from "@/lib/patientStore";
 
 type Tab = "dashboard" | "video";
@@ -14,6 +15,7 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("dashboard");
   const [dataMode, setDataMode] = useState<DataMode>("demo");
   const [patients, setPatients] = useState<Patient[]>([]);
+  const [demoPatients, setDemoPatients] = useState<Patient[]>(() => getDemoPatients());
 
   const handleFrameAnalyzed = (people: DetectedPerson[], frameBase64: string) => {
     if (people.length === 0) return;
@@ -23,15 +25,22 @@ export default function App() {
   const handleAnalysisStart = () => setTab("dashboard");
 
   const handleConfirm = (key: string) => {
-    setPatients((prev) =>
-      prev.map((p) => (p.key === key ? { ...p, confirmed: !p.confirmed } : p))
-    );
+    const togglePatient = (list: Patient[]) =>
+      list.map((p) => (p.key === key ? { ...p, confirmed: !p.confirmed } : p));
+
+    if (dataMode === "demo") {
+      setDemoPatients((prev) => togglePatient(prev));
+      return;
+    }
+
+    setPatients((prev) => togglePatient(prev));
   };
 
-  const activeCount = patients.filter((p) => !p.confirmed).length;
-  const urgentCount = patients.filter((p) => !p.confirmed && p.risk === "RED").length;
-  const watchCount = patients.filter((p) => !p.confirmed && p.risk === "YELLOW").length;
-  const treatedCount = patients.filter((p) => p.confirmed).length;
+  const visiblePatients = dataMode === "demo" ? demoPatients : patients;
+  const activeCount = visiblePatients.filter((p) => !p.confirmed).length;
+  const urgentCount = visiblePatients.filter((p) => !p.confirmed && p.risk === "RED").length;
+  const watchCount = visiblePatients.filter((p) => !p.confirmed && p.risk === "YELLOW").length;
+  const treatedCount = visiblePatients.filter((p) => p.confirmed).length;
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(245,158,11,0.12),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(239,68,68,0.14),_transparent_30%),linear-gradient(180deg,_#09111d_0%,_#050913_100%)] text-white">
@@ -86,7 +95,7 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              {patients.length > 0 && (
+              {visiblePatients.length > 0 && (
                 <div className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-slate-300">
                   {treatedCount} treated
                 </div>
@@ -127,7 +136,7 @@ export default function App() {
 
       <main className="mx-auto flex w-full max-w-7xl flex-1 px-6 py-6">
         <div className={`w-full ${tab !== "dashboard" ? "hidden" : ""}`}>
-          <Dashboard patients={patients} onConfirm={handleConfirm} mode={dataMode} />
+          <Dashboard patients={visiblePatients} onConfirm={handleConfirm} mode={dataMode} />
         </div>
 
         <div className={`w-full ${tab !== "video" ? "hidden" : ""}`}>
