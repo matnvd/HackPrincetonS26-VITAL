@@ -151,11 +151,12 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
   const streamRef       = useRef<MediaStream | null>(null);
   const isCapturingRef  = useRef(false); // ref so the async loop always reads current value
 
-  const [camState, setCamState]       = useState<"idle" | "active" | "analyzing" | "error">("idle");
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [frameCount, setFrameCount]   = useState(0);
-  const [errorMsg, setErrorMsg]       = useState("");
-  const [lastError, setLastError]     = useState("");
+  const [camState, setCamState]         = useState<"idle" | "active" | "analyzing" | "error">("idle");
+  const [isCapturing, setIsCapturing]   = useState(false);
+  const [frameCount, setFrameCount]     = useState(0);
+  const [lastDetectTime, setLastDetect] = useState<number | null>(null);
+  const [errorMsg, setErrorMsg]         = useState("");
+  const [lastError, setLastError]       = useState("");
 
   const startCamera = async () => {
     try {
@@ -185,7 +186,8 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
     const video = videoRef.current;
     if (!video || video.readyState < 2) return null;
     const canvas = document.createElement("canvas");
-    const scale = Math.min(1, 768 / video.videoWidth);
+    // 640px balances detection quality vs. payload size — smaller = faster Gemini round-trip
+    const scale = Math.min(1, 640 / video.videoWidth);
     canvas.width  = Math.round(video.videoWidth  * scale);
     canvas.height = Math.round(video.videoHeight * scale);
     const ctx = canvas.getContext("2d")!;
@@ -213,13 +215,14 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
           const people = await detectPeople(base64);
           onFrameAnalyzed(people, base64);
           setFrameCount((n) => n + 1);
+          setLastDetect(Date.now());
         } catch (err) {
           const msg = err instanceof Error ? err.message : "Unknown error";
           console.error("Live detection error:", msg);
           setLastError(msg);
         }
-        // Brief pause between calls to avoid rate-limiting
-        await new Promise((r) => setTimeout(r, 800));
+        // Minimal pause — just enough to yield the thread, not add latency
+        await new Promise((r) => setTimeout(r, 100));
       }
     };
 
@@ -304,9 +307,12 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
       </div>
 
       {camState === "analyzing" && (
-        <p className="text-gray-600 text-xs">
-          Analyzing a frame every 4 s · patients appear on the Dashboard tab
-        </p>
+        <div className="flex items-center justify-between text-xs text-gray-600">
+          <span>{frameCount} frame{frameCount !== 1 ? "s" : ""} analyzed · results on Dashboard tab</span>
+          {lastDetectTime && (
+            <span className="font-mono">last scan {Math.round((Date.now() - lastDetectTime) / 1000)}s ago</span>
+          )}
+        </div>
       )}
 
       {lastError && (

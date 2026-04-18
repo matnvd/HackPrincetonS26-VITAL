@@ -55,21 +55,41 @@ GREEN — Non-urgent (stable; can wait safely):
 • Comfortable respiratory pattern
 • Appears healthy or only mildly unwell
 
+━━━ CRITICAL: ONE ENTRY PER PERSON ━━━
+Before writing JSON, COUNT the number of distinct individuals in the frame.
+Your "people" array MUST contain exactly that many entries — one per person, no exceptions.
+
+NEVER merge two people into a single entry, even if they are:
+- standing next to each other
+- touching or overlapping
+- wearing similar clothing
+- partially obscured
+
+If you see 2 people → 2 entries. 3 people → 3 entries. And so on.
+
+To distinguish people who appear together, ALWAYS include their position in the frame as part of the id:
+  left / right / center / foreground / background / near door / on floor / against wall / seated left
+
+Examples of correctly separated entries when two people are in frame:
+  { "id": "young man grey hoodie left foreground", ... }
+  { "id": "woman dark hair red jacket right side standing", ... }
+
 ━━━ ID GENERATION RULE ━━━
-The "id" is a repeatable physical fingerprint for cross-frame tracking. Format:
-[age group] [gender] [most visible clothing color+type] [1-2 distinctive physical features] [position if notable]
+Format: [age group] [gender] [clothing color+type] [1 physical feature] [frame position]
+- ALWAYS end with frame position so people in the same frame have unique ids
+- Use the EXACT same id string when you see the same person in a later frame
 Examples:
-  "elderly woman white hair green hospital gown lying on floor"
-  "young man black hoodie dark beard sitting against wall"
-  "middle-aged woman blonde hair red scrubs standing"
-Use the EXACT same id string every time you detect the same person across frames.
+  "elderly woman white hair green gown lying floor left"
+  "young man black hoodie beard center frame"
+  "middle-aged woman blonde red scrubs standing right"
 
 ━━━ RULES ━━━
-1. Report ALL visible people, including background individuals (assign GREEN if stable).
-2. Use precise medical terminology in symptoms (e.g. "diaphoresis" not "sweating", "pallor" not "looks pale").
-3. If uncertain between RED and YELLOW, assign RED — overtriage is safer than undertriage.
-4. The "observation" field must be your raw clinical notes written BEFORE you assign a risk level. Think step by step.
-5. Symptoms array: 2–5 specific clinical signs, not vague labels.
+1. Count people first. Array length must equal people count.
+2. Report ALL visible people including background — GREEN if stable.
+3. Medical terminology for symptoms: "diaphoresis" not "sweating", "pallor" not "looks pale", "tachypnea" not "breathing fast".
+4. Write the "observation" field BEFORE deciding risk — think step by step.
+5. Symptoms: 2–5 specific clinical signs.
+6. When uncertain between RED and YELLOW → assign RED. Overtriage saves lives.
 `.trim();
 
 // ─── Response schema ─────────────────────────────────────────────────────────
