@@ -89,6 +89,7 @@ function drawLandmarks(
 }
 
 function drawScanLine(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  if (!w || !h) return;
   const y = (performance.now() / 8) % h;
   const grad = ctx.createLinearGradient(0, y - 12, 0, y + 12);
   grad.addColorStop(0,   "transparent");
