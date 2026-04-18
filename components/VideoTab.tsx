@@ -403,8 +403,11 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
           </div>
           {/* Rate limit warning */}
           {cycleStatus.includes("rate limited") && (
-            <div className="px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs">
-              <span className="font-semibold">API quota hit.</span> Click the 🔑 Key button in the header to switch to a different Gemini API key.
+            <div className="px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs flex flex-col gap-1">
+              <span className="font-semibold">API quota hit.</span>
+              <span>1. Go to <span className="font-mono">aistudio.google.com</span> → Get API key → Create new project</span>
+              <span>2. Paste the new key using the 🔑 button in the header</span>
+              <span className="text-yellow-600">Note: keys must come from AI Studio, not Google Cloud Console</span>
             </div>
           )}
         </div>
