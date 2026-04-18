@@ -54,14 +54,17 @@ function captureFrame(url: string, timeSec: number): Promise<string> {
 
     video.onseeked = () => {
       const canvas = document.createElement("canvas");
-      // Cap width at 768 px — enough for vision models, keeps base64 small
-      const scale = Math.min(1, 768 / video.videoWidth);
+      // 1024 px gives Gemini enough detail to read facial expressions, skin color, injuries
+      const scale = Math.min(1, 1024 / video.videoWidth);
       canvas.width = Math.round(video.videoWidth * scale);
       canvas.height = Math.round(video.videoHeight * scale);
 
       const ctx = canvas.getContext("2d")!;
+      // Sharpen rendering for better AI detection accuracy
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL("image/jpeg", 0.8));
+      resolve(canvas.toDataURL("image/jpeg", 0.92));
     };
 
     video.onerror = () => reject(new Error(`Seek failed at ${timeSec}s`));

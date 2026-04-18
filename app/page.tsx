@@ -1,130 +1,93 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { extractFrames } from "@/lib/extractFrames";
+import { useState } from "react";
+import Dashboard from "@/components/Dashboard";
+import VideoTab from "@/components/VideoTab";
+import { mergePatients } from "@/lib/patientStore";
+import type { Patient, DetectedPerson } from "@/lib/patientStore";
 
-export default function UploadPage() {
-  const [file, setFile] = useState<File | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const [extracting, setExtracting] = useState(false);
-  const [progress, setProgress] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  const router = useRouter();
+type Tab = "dashboard" | "video";
 
-  const handleFile = (f: File) => {
-    if (f.type.startsWith("video/")) setFile(f);
+export default function App() {
+  const [tab, setTab]           = useState<Tab>("video");
+  const [patients, setPatients] = useState<Patient[]>([]);
+
+  const handleFrameAnalyzed = (people: DetectedPerson[], frameBase64: string) => {
+    if (people.length === 0) return;
+    setPatients((prev) => mergePatients(prev, people, frameBase64));
   };
 
-  const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
-    const f = e.dataTransfer.files[0];
-    if (f) handleFile(f);
-  }, []);
+  const handleAnalysisStart = () => setTab("dashboard");
 
-  const onDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(true);
+  const handleConfirm = (key: string) => {
+    setPatients((prev) =>
+      prev.map((p) => (p.key === key ? { ...p, confirmed: !p.confirmed } : p))
+    );
   };
 
-  const onDragLeave = () => setDragging(false);
-
-  const handleAnalyze = async () => {
-    if (!file) return;
-    setExtracting(true);
-    setProgress("Extracting frames…");
-    try {
-      const frames = await extractFrames(file);
-      setProgress(`${frames.length} frames extracted`);
-      sessionStorage.setItem("wait_frames", JSON.stringify(frames));
-      router.push(`/results?name=${encodeURIComponent(file.name)}`);
-    } catch (err) {
-      console.error(err);
-      setProgress("Failed to extract frames. Try a different video.");
-      setExtracting(false);
-    }
-  };
+  const activeCount = patients.filter((p) => !p.confirmed).length;
 
   return (
-    <main className="flex flex-col items-center justify-center min-h-screen px-4">
+    <div className="min-h-screen flex flex-col">
       {/* Header */}
-      <div className="mb-10 text-center">
-        <h1 className="text-4xl font-bold tracking-tight text-white">
-          W<span className="text-red-500">.</span>A<span className="text-red-500">.</span>I<span className="text-red-500">.</span>T<span className="text-red-500">.</span>
-        </h1>
-        <p className="mt-2 text-gray-400 text-sm">Watchful AI Incident Triage</p>
-      </div>
+      <header className="border-b border-gray-800 px-6 py-4 flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-bold tracking-tight text-white">
+            W<span className="text-red-500">.</span>A<span className="text-red-500">.</span>I<span className="text-red-500">.</span>T<span className="text-red-500">.</span>
+          </h1>
+          <p className="text-gray-600 text-xs">Watchful AI Incident Triage</p>
+        </div>
 
-      {/* Drop zone */}
-      <div
-        onClick={() => inputRef.current?.click()}
-        onDrop={onDrop}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        className={`
-          w-full max-w-lg cursor-pointer rounded-2xl border-2 border-dashed p-12
-          flex flex-col items-center gap-4 transition-colors
-          ${dragging
-            ? "border-red-500 bg-red-500/10"
-            : file
-            ? "border-green-500 bg-green-500/5"
-            : "border-gray-700 bg-gray-900 hover:border-gray-500"
-          }
-        `}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept="video/*"
-          className="hidden"
-          onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-        />
-
-        {file ? (
-          <>
-            <div className="w-14 h-14 rounded-full bg-green-500/20 flex items-center justify-center">
-              <svg className="w-7 h-7 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <p className="text-green-400 font-medium">{file.name}</p>
-            <p className="text-gray-500 text-sm">{(file.size / 1024 / 1024).toFixed(1)} MB · Click to change</p>
-          </>
-        ) : (
-          <>
-            <div className="w-14 h-14 rounded-full bg-gray-800 flex items-center justify-center">
-              <svg className="w-7 h-7 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.67v6.66a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
-              </svg>
-            </div>
-            <div className="text-center">
-              <p className="text-gray-300 font-medium">Drop a video here</p>
-              <p className="text-gray-500 text-sm mt-1">or click to browse</p>
-            </div>
-            <p className="text-gray-600 text-xs">MP4, MOV, AVI supported</p>
-          </>
+        {/* Live stats */}
+        {patients.length > 0 && (
+          <div className="flex items-center gap-3 text-xs text-gray-500">
+            {activeCount > 0 && (
+              <span className="flex items-center gap-1.5 text-red-400 font-semibold">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                {activeCount} awaiting care
+              </span>
+            )}
+            <span>{patients.filter((p) => p.confirmed).length} treated</span>
+          </div>
         )}
-      </div>
+      </header>
 
-      {/* Analyze button */}
-      <button
-        onClick={handleAnalyze}
-        disabled={!file || extracting}
-        className={`
-          mt-6 px-10 py-3 rounded-xl font-semibold text-sm tracking-wide transition-all
-          ${file && !extracting
-            ? "bg-red-600 hover:bg-red-500 text-white cursor-pointer"
-            : "bg-gray-800 text-gray-600 cursor-not-allowed"
-          }
-        `}
-      >
-        {extracting ? "Extracting…" : "Analyze"}
-      </button>
+      {/* Tab bar */}
+      <nav className="flex border-b border-gray-800 px-6">
+        {([
+          { key: "dashboard", label: "Dashboard", badge: activeCount > 0 ? activeCount : null },
+          { key: "video",     label: "Video Input", badge: null },
+        ] as { key: Tab; label: string; badge: number | null }[]).map(({ key, label, badge }) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`relative flex items-center gap-2 px-1 py-3 mr-6 text-sm font-medium border-b-2 transition-colors cursor-pointer ${
+              tab === key
+                ? "border-red-500 text-white"
+                : "border-transparent text-gray-500 hover:text-gray-300"
+            }`}
+          >
+            {label}
+            {badge !== null && (
+              <span className="flex items-center justify-center w-4 h-4 rounded-full bg-red-500 text-white text-xs font-bold">
+                {badge}
+              </span>
+            )}
+          </button>
+        ))}
+      </nav>
 
-      <p className="mt-3 text-xs h-4 text-gray-500">
-        {progress || "Frames are extracted every ~3 seconds and classified by AI"}
-      </p>
-    </main>
+      {/* Tab content */}
+      <main className="flex-1 max-w-2xl w-full mx-auto px-4 py-8">
+        {tab === "dashboard" ? (
+          <Dashboard patients={patients} onConfirm={handleConfirm} />
+        ) : (
+          <VideoTab
+            onFrameAnalyzed={handleFrameAnalyzed}
+            onAnalysisStart={handleAnalysisStart}
+          />
+        )}
+      </main>
+    </div>
   );
 }
