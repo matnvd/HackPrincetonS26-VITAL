@@ -401,13 +401,16 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
             <span className="text-green-600">{successCount} successful</span>
             <span className="ml-auto text-gray-700">results → Dashboard tab</span>
           </div>
-          {/* Rate limit warning */}
+          {/* Rate limit / zero-quota warning */}
           {cycleStatus.includes("rate limited") && (
-            <div className="px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs flex flex-col gap-1">
-              <span className="font-semibold">API quota hit.</span>
-              <span>1. Go to <span className="font-mono">aistudio.google.com</span> → Get API key → Create new project</span>
-              <span>2. Paste the new key using the 🔑 button in the header</span>
-              <span className="text-yellow-600">Note: keys must come from AI Studio, not Google Cloud Console</span>
+            <div className="px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs flex flex-col gap-1.5">
+              <span className="font-semibold text-yellow-300">⚠ API key has no quota (limit: 0)</span>
+              <span>Keys from Google Cloud Console have zero free quota by default.</span>
+              <span className="font-semibold">Get a working key:</span>
+              <span>1. Open <span className="font-mono bg-black/30 px-1 rounded">aistudio.google.com</span> in a browser</span>
+              <span>2. Sign in → click <span className="font-mono bg-black/30 px-1 rounded">Get API key</span> → <span className="font-mono bg-black/30 px-1 rounded">Create API key in new project</span></span>
+              <span>3. Paste it using the 🔑 button in the top-right header</span>
+              <span className="text-yellow-600 italic">Each Google account gives a separate free key. Use different accounts to rotate.</span>
             </div>
           )}
         </div>
