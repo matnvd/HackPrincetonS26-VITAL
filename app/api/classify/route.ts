@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   // Strip the data URL prefix if present: "data:image/jpeg;base64,<data>"
   const imageData = base64.replace(/^data:image\/\w+;base64,/, "");
 
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
   const result = await model.generateContent([
     PROMPT,

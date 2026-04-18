@@ -145,6 +145,40 @@ const RESPONSE_SCHEMA = {
   required: ["people"],
 };
 
+// ─── Retry helper ────────────────────────────────────────────────────────────
+// Gemini 429 responses include a suggested retryDelay — honour it exactly.
+
+function parse429Delay(message: string): number | null {
+  const match = message.match(/retry in ([\d.]+)s/i);
+  return match ? Math.ceil(parseFloat(match[1]) * 1000) + 500 : null;
+}
+
+async function generateWithRetry(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  model: any,
+  content: unknown[],
+  maxAttempts = 3
+): Promise<string> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result = await model.generateContent(content);
+      return result.response.text();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const is429 = msg.includes("429");
+
+      if (is429 && attempt < maxAttempts) {
+        const delay = parse429Delay(msg) ?? 15_000;
+        console.warn(`[/api/detect] 429 on attempt ${attempt}, retrying in ${delay}ms`);
+        await new Promise((r) => setTimeout(r, delay));
+      } else {
+        throw err;
+      }
+    }
+  }
+  throw new Error("Max retries exceeded");
+}
+
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
@@ -154,8 +188,9 @@ export async function POST(req: NextRequest) {
 
     const imageData = base64.replace(/^data:image\/\w+;base64,/, "");
 
+    // gemini-2.0-flash: 15 RPM on free tier vs 5 RPM for gemini-2.5-flash
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.0-flash",
       systemInstruction: SYSTEM_INSTRUCTION,
       generationConfig: {
         responseMimeType: "application/json",
@@ -165,18 +200,13 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    const result = await model.generateContent([
+    const text = await generateWithRetry(model, [
       "Analyze this video frame. Identify and triage every visible person. Apply the triage criteria precisely.",
       { inlineData: { mimeType: "image/jpeg", data: imageData } },
     ]);
 
-    const text = result.response.text();
-
-    // Strip markdown fences in case the model wraps output despite responseMimeType
     const jsonText = text.replace(/^```json\s*/i, "").replace(/```$/m, "").trim();
-    const parsed = JSON.parse(jsonText);
-
-    return NextResponse.json(parsed);
+    return NextResponse.json(JSON.parse(jsonText));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[/api/detect]", message);

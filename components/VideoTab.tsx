@@ -207,8 +207,13 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
 
     // Continuous loop: capture → send → wait 800ms → repeat.
     // No skipped frames — each call starts immediately after the previous response.
+    // gemini-2.0-flash free tier = 15 RPM → 1 request per 4 s minimum.
+    // We enforce a 4.5 s floor per cycle (total time = API latency + wait).
+    const MIN_CYCLE_MS = 4500;
+
     const loop = async () => {
       while (isCapturingRef.current) {
+        const cycleStart = Date.now();
         setLastError("");
         try {
           const base64 = captureFrame();
@@ -222,8 +227,9 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
           console.error("Live detection error:", msg);
           setLastError(msg);
         }
-        // Minimal pause — just enough to yield the thread, not add latency
-        await new Promise((r) => setTimeout(r, 100));
+        // Wait out the remainder of the minimum cycle window
+        const elapsed = Date.now() - cycleStart;
+        await new Promise((r) => setTimeout(r, Math.max(200, MIN_CYCLE_MS - elapsed)));
       }
     };
 
