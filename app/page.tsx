@@ -8,9 +8,11 @@ import { mergePatients } from "@/lib/patientStore";
 import type { Patient, DetectedPerson } from "@/lib/patientStore";
 
 type Tab = "dashboard" | "video";
+type DataMode = "demo" | "real";
 
 export default function App() {
   const [tab, setTab] = useState<Tab>("dashboard");
+  const [dataMode, setDataMode] = useState<DataMode>("demo");
   const [patients, setPatients] = useState<Patient[]>([]);
 
   const handleFrameAnalyzed = (people: DetectedPerson[], frameBase64: string) => {
@@ -65,6 +67,24 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-3">
+              <div className="flex rounded-full border border-white/10 bg-white/5 p-1">
+                {([
+                  { key: "demo", label: "Preview / Demo" },
+                  { key: "real", label: "Real Mode" },
+                ] as { key: DataMode; label: string }[]).map(({ key, label }) => (
+                  <button
+                    key={key}
+                    onClick={() => setDataMode(key)}
+                    className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
+                      dataMode === key
+                        ? "bg-red-500/20 text-white"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               {patients.length > 0 && (
                 <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300">
                   {treatedCount} treated
@@ -105,7 +125,7 @@ export default function App() {
 
       <main className="mx-auto flex w-full max-w-7xl flex-1 px-6 py-6">
         <div className={`w-full ${tab !== "dashboard" ? "hidden" : ""}`}>
-          <Dashboard patients={patients} onConfirm={handleConfirm} />
+          <Dashboard patients={patients} onConfirm={handleConfirm} mode={dataMode} />
         </div>
 
         <div className={`w-full ${tab !== "video" ? "hidden" : ""}`}>
