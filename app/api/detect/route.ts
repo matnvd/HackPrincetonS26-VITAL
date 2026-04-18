@@ -121,27 +121,38 @@ const RESPONSE_SCHEMA = {
 // ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const { base64 } = await req.json();
-  if (!base64) return NextResponse.json({ error: "Missing base64" }, { status: 400 });
+  try {
+    const { base64 } = await req.json();
+    if (!base64) return NextResponse.json({ error: "Missing base64" }, { status: 400 });
 
-  const imageData = base64.replace(/^data:image\/\w+;base64,/, "");
+    const imageData = base64.replace(/^data:image\/\w+;base64,/, "");
 
-  const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
-    systemInstruction: SYSTEM_INSTRUCTION,
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: RESPONSE_SCHEMA,
-      temperature: 0.1,      // Low temperature = consistent, reproducible assessments
-      topP: 0.8,
-    },
-  });
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash",
+      systemInstruction: SYSTEM_INSTRUCTION,
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: RESPONSE_SCHEMA,
+        temperature: 0.1,
+        topP: 0.8,
+      },
+    });
 
-  const result = await model.generateContent([
-    "Analyze this video frame. Identify and triage every visible person. Apply the triage criteria precisely.",
-    { inlineData: { mimeType: "image/jpeg", data: imageData } },
-  ]);
+    const result = await model.generateContent([
+      "Analyze this video frame. Identify and triage every visible person. Apply the triage criteria precisely.",
+      { inlineData: { mimeType: "image/jpeg", data: imageData } },
+    ]);
 
-  const parsed = JSON.parse(result.response.text());
-  return NextResponse.json(parsed);
+    const text = result.response.text();
+
+    // Strip markdown fences in case the model wraps output despite responseMimeType
+    const jsonText = text.replace(/^```json\s*/i, "").replace(/```$/m, "").trim();
+    const parsed = JSON.parse(jsonText);
+
+    return NextResponse.json(parsed);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[/api/detect]", message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }

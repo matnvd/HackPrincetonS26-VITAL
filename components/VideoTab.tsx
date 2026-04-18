@@ -15,8 +15,8 @@ async function detectPeople(base64: string): Promise<DetectedPerson[]> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ base64 }),
   });
-  if (!res.ok) throw new Error(`Detect API error ${res.status}`);
   const data = await res.json();
+  if (!res.ok) throw new Error(data?.error ?? `Detect API error ${res.status}`);
   return data.people ?? [];
 }
 
