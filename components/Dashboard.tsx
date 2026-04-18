@@ -5,18 +5,67 @@ import type { Patient, RiskLevel } from "@/lib/patientStore";
 import { sortByRisk, featureSeverity } from "@/lib/patientStore";
 
 const RISK_CONFIG: Record<RiskLevel, { label: string; color: string; bg: string; border: string; dot: string; pill: string }> = {
-  RED:    { label: "Urgent",      color: "text-red-400",    bg: "bg-red-500/20",    border: "border-red-500/40",    dot: "bg-red-400",    pill: "bg-red-500/20 text-red-300 border-red-500/30"    },
-  YELLOW: { label: "Concerning",  color: "text-yellow-400", bg: "bg-yellow-500/20", border: "border-yellow-500/40", dot: "bg-yellow-400", pill: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" },
-  GREEN:  { label: "Stable",      color: "text-green-400",  bg: "bg-green-500/20",  border: "border-green-500/40",  dot: "bg-green-400",  pill: "bg-green-500/20 text-green-300 border-green-500/30"  },
+  RED: { label: "Urgent", color: "text-red-200", bg: "bg-red-500/20", border: "border-red-500/40", dot: "bg-red-400", pill: "border-red-500/30 bg-red-500/10 text-red-100" },
+  YELLOW: { label: "Concerning", color: "text-amber-100", bg: "bg-amber-400/20", border: "border-amber-400/35", dot: "bg-amber-300", pill: "border-amber-400/25 bg-amber-400/10 text-amber-50" },
+  GREEN: { label: "Stable", color: "text-emerald-100", bg: "bg-emerald-500/20", border: "border-emerald-500/35", dot: "bg-emerald-400", pill: "border-emerald-500/25 bg-emerald-500/10 text-emerald-50" },
 };
 
-// Person index → color used in the live overlay
 const PERSON_COLORS: Record<string, string> = {
   person_1: "#00ff88",
   person_2: "#38bdf8",
   person_3: "#fb923c",
   person_4: "#a78bfa",
 };
+
+const PREVIEW_TIME = 1_760_000_000_000;
+
+const PREVIEW_PATIENTS: Patient[] = [
+  {
+    key: "preview_1",
+    id: "person_1",
+    bbox: { x: 0, y: 0, w: 0, h: 0 },
+    features: ["labored breathing", "slumped posture", "hand on chest"],
+    risk: "RED",
+    description: "Adult seated forward with visible respiratory strain and limited responsiveness.",
+    reason: "Posture and breathing pattern suggest acute distress and require immediate in-person assessment.",
+    cropBase64: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360' viewBox='0 0 640 360'><rect width='640' height='360' fill='%230d1320'/><rect x='36' y='28' width='568' height='304' rx='24' fill='%23182133'/><circle cx='220' cy='130' r='54' fill='%23f2c9a5'/><rect x='168' y='192' width='108' height='102' rx='34' fill='%239b4b3e'/><rect x='286' y='124' width='164' height='142' rx='26' fill='%23b24545'/><rect x='312' y='92' width='88' height='22' rx='11' fill='%23ef4444' fill-opacity='0.65'/><rect x='298' y='286' width='196' height='18' rx='9' fill='%23f59e0b' fill-opacity='0.38'/></svg>",
+    thumbnail: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360' viewBox='0 0 640 360'><rect width='640' height='360' fill='%230d1320'/><rect x='36' y='28' width='568' height='304' rx='24' fill='%23182133'/><circle cx='220' cy='130' r='54' fill='%23f2c9a5'/><rect x='168' y='192' width='108' height='102' rx='34' fill='%239b4b3e'/><rect x='286' y='124' width='164' height='142' rx='26' fill='%23b24545'/><rect x='312' y='92' width='88' height='22' rx='11' fill='%23ef4444' fill-opacity='0.65'/><rect x='298' y='286' width='196' height='18' rx='9' fill='%23f59e0b' fill-opacity='0.38'/></svg>",
+    firstSeen: PREVIEW_TIME - 84000,
+    lastSeen: PREVIEW_TIME,
+    confirmed: false,
+    seenCount: 2,
+  },
+  {
+    key: "preview_2",
+    id: "person_2",
+    bbox: { x: 0, y: 0, w: 0, h: 0 },
+    features: ["dizziness", "leaning on support", "reduced balance"],
+    risk: "YELLOW",
+    description: "Standing adult appears unsteady and intermittently braces against nearby furniture.",
+    reason: "Balance changes and guarded stance may indicate worsening fatigue, pain, or near-syncope.",
+    cropBase64: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360' viewBox='0 0 640 360'><rect width='640' height='360' fill='%230c1320'/><rect x='36' y='28' width='568' height='304' rx='24' fill='%2317222f'/><circle cx='250' cy='118' r='48' fill='%23edc19a'/><rect x='210' y='172' width='84' height='118' rx='28' fill='%232f6d8c'/><rect x='308' y='116' width='122' height='166' rx='24' fill='%233b82f6' fill-opacity='0.55'/><rect x='436' y='96' width='28' height='190' rx='14' fill='%23f8fafc' fill-opacity='0.5'/><rect x='316' y='292' width='148' height='16' rx='8' fill='%23facc15' fill-opacity='0.4'/></svg>",
+    thumbnail: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360' viewBox='0 0 640 360'><rect width='640' height='360' fill='%230c1320'/><rect x='36' y='28' width='568' height='304' rx='24' fill='%2317222f'/><circle cx='250' cy='118' r='48' fill='%23edc19a'/><rect x='210' y='172' width='84' height='118' rx='28' fill='%232f6d8c'/><rect x='308' y='116' width='122' height='166' rx='24' fill='%233b82f6' fill-opacity='0.55'/><rect x='436' y='96' width='28' height='190' rx='14' fill='%23f8fafc' fill-opacity='0.5'/><rect x='316' y='292' width='148' height='16' rx='8' fill='%23facc15' fill-opacity='0.4'/></svg>",
+    firstSeen: PREVIEW_TIME - 127000,
+    lastSeen: PREVIEW_TIME,
+    confirmed: false,
+    seenCount: 4,
+  },
+  {
+    key: "preview_3",
+    id: "person_3",
+    bbox: { x: 0, y: 0, w: 0, h: 0 },
+    features: ["calm posture", "upright seated position", "alert gaze"],
+    risk: "GREEN",
+    description: "Patient remains upright, alert, and visually stable without obvious distress cues.",
+    reason: "No visible signs of immediate escalation in this frame; continue routine monitoring.",
+    cropBase64: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360' viewBox='0 0 640 360'><rect width='640' height='360' fill='%23091316'/><rect x='36' y='28' width='568' height='304' rx='24' fill='%2313272c'/><circle cx='220' cy='124' r='46' fill='%23eec4a0'/><rect x='182' y='176' width='76' height='118' rx='28' fill='%233a6d56'/><rect x='288' y='128' width='184' height='146' rx='28' fill='%2310b981' fill-opacity='0.38'/><rect x='294' y='286' width='192' height='18' rx='9' fill='%2334d399' fill-opacity='0.4'/></svg>",
+    thumbnail: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='640' height='360' viewBox='0 0 640 360'><rect width='640' height='360' fill='%23091316'/><rect x='36' y='28' width='568' height='304' rx='24' fill='%2313272c'/><circle cx='220' cy='124' r='46' fill='%23eec4a0'/><rect x='182' y='176' width='76' height='118' rx='28' fill='%233a6d56'/><rect x='288' y='128' width='184' height='146' rx='28' fill='%2310b981' fill-opacity='0.38'/><rect x='294' y='286' width='192' height='18' rx='9' fill='%2334d399' fill-opacity='0.4'/></svg>",
+    firstSeen: PREVIEW_TIME - 56000,
+    lastSeen: PREVIEW_TIME,
+    confirmed: false,
+    seenCount: 3,
+  },
+];
 
 function formatElapsed(since: number): string {
   const secs = Math.floor((Date.now() - since) / 1000);
@@ -28,101 +77,108 @@ function formatElapsed(since: number): string {
 
 function ElapsedTimer({ since }: { since: number }) {
   const [elapsed, setElapsed] = useState(formatElapsed(since));
+
   useEffect(() => {
     const id = setInterval(() => setElapsed(formatElapsed(since)), 1000);
     return () => clearInterval(id);
   }, [since]);
+
   return <span>{elapsed}</span>;
 }
 
 function PatientCard({ patient, onConfirm }: { patient: Patient; onConfirm: (key: string) => void }) {
-  const cfg        = RISK_CONFIG[patient.risk];
+  const cfg = RISK_CONFIG[patient.risk];
   const accentColor = PERSON_COLORS[patient.id] ?? "#ffffff";
-  const personNum   = patient.id.replace("person_", "");
+  const personNum = patient.id.replace("person_", "");
+  const topFeature = patient.features[0];
 
   return (
     <div
-      className={`rounded-xl border overflow-hidden flex flex-col transition-opacity ${
-        patient.confirmed ? "opacity-40" : ""
-      } ${cfg.border} bg-gray-900`}
+      className={`overflow-hidden rounded-3xl border transition-all ${patient.confirmed ? "opacity-50" : ""} ${cfg.border} bg-slate-950/80 shadow-[0_20px_60px_rgba(2,6,23,0.45)]`}
     >
-      {/* Thumbnail */}
-      <div className="relative bg-gray-800 aspect-video shrink-0">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={patient.thumbnail} alt="" className="w-full h-full object-cover" />
+      <div className="flex h-full min-h-[320px] flex-col xl:min-h-[340px] xl:flex-row">
+        <div className="relative xl:w-[42%]">
+          <div className="absolute inset-0 z-10 bg-gradient-to-tr from-slate-950/80 via-transparent to-transparent" />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={patient.thumbnail} alt="" className="h-full min-h-[210px] w-full object-cover" />
 
-        {/* Person badge — top left, colored per person */}
-        <div
-          className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-bold border backdrop-blur-sm"
-          style={{ color: accentColor, borderColor: accentColor + "60", backgroundColor: accentColor + "20" }}
-        >
-          PERSON {personNum}
-        </div>
-
-        {/* Risk badge — top right */}
-        <div className={`absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border backdrop-blur-sm ${cfg.bg} ${cfg.border} ${cfg.color}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-          {cfg.label}
-        </div>
-
-        {/* Elapsed timer */}
-        <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/70 text-gray-300 text-xs font-mono">
-          <ElapsedTimer since={patient.firstSeen} />
-        </div>
-
-        {patient.confirmed && (
-          <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-            <span className="text-green-400 text-xs font-bold uppercase tracking-widest">Receiving Treatment</span>
+          <div
+            className="absolute left-4 top-4 z-20 rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-[0.24em] backdrop-blur-sm"
+            style={{ color: accentColor, borderColor: `${accentColor}66`, backgroundColor: `${accentColor}22` }}
+          >
+            Patient {personNum}
           </div>
-        )}
-      </div>
 
-      {/* Card body */}
-      <div className="p-2.5 flex flex-col gap-2 flex-1">
-        {/* Description */}
-        <p className="text-gray-300 text-xs leading-snug line-clamp-2">
-          {patient.description}
-        </p>
+          <div className={`absolute right-4 top-4 z-20 flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] backdrop-blur-sm ${cfg.bg} ${cfg.border} ${cfg.color}`}>
+            <span className={`h-2 w-2 rounded-full ${cfg.dot}`} />
+            {cfg.label}
+          </div>
 
-        {/* Reason / justification */}
-        <p className="text-gray-600 text-xs leading-snug line-clamp-2 italic">
-          {patient.reason}
-        </p>
+          <div className="absolute bottom-4 left-4 z-20 rounded-2xl border border-white/10 bg-black/45 px-3 py-2 backdrop-blur-md">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.26em] text-slate-300">Visible Priority</p>
+            <p className="mt-1 text-sm font-medium text-white">{topFeature ?? "No visible symptom detail"}</p>
+          </div>
 
-        {/* Feature tags */}
-        <div className="flex flex-col gap-1">
-          {patient.features.slice(0, 4).map((f, i) => {
-            const isCritical = i === 0 && featureSeverity(f) >= 3;
-            return (
-              <span
-                key={f}
-                className={`px-1.5 py-0.5 rounded text-xs border leading-snug ${
-                  isCritical
-                    ? "bg-red-500/30 text-red-200 border-red-500/50 font-semibold"
-                    : cfg.pill
-                }`}
-              >
-                {isCritical && "⚠ "}{f}
+          {patient.confirmed && (
+            <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/55">
+              <span className="rounded-full border border-green-400/30 bg-green-500/15 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-green-200">
+                Receiving care
               </span>
-            );
-          })}
-          {patient.features.length > 4 && (
-            <span className="px-1.5 py-0.5 text-xs text-gray-600 leading-none">
-              +{patient.features.length - 4} more
-            </span>
+            </div>
           )}
         </div>
 
-        <button
-          onClick={() => onConfirm(patient.key)}
-          className={`mt-auto w-full text-xs py-1.5 rounded-lg border font-medium transition-all cursor-pointer ${
-            patient.confirmed
-              ? "border-green-500/40 bg-green-500/10 text-green-400"
-              : "border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300"
-          }`}
-        >
-          {patient.confirmed ? "✓ Treated" : "Mark as Treated"}
-        </button>
+        <div className="flex flex-1 flex-col p-5">
+          <div className="mb-4 flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">Current Status</p>
+              <h3 className="mt-2 text-lg font-semibold text-white">{patient.description}</h3>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-500">Seen</p>
+              <p className="mt-1 text-sm font-mono text-slate-200">
+                <ElapsedTimer since={patient.firstSeen} />
+              </p>
+            </div>
+          </div>
+
+          <div className="mb-4 rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">Why This Needs Attention</p>
+            <p className="mt-2 text-sm leading-6 text-slate-300">{patient.reason}</p>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-400">Observed Symptoms</p>
+            {patient.features.slice(0, 4).map((feature, index) => {
+              const isCritical = index === 0 && featureSeverity(feature) >= 3;
+              return (
+                <span
+                  key={feature}
+                  className={`rounded-2xl border px-3 py-2 text-sm leading-6 ${isCritical ? "border-red-500/40 bg-red-500/15 font-semibold text-red-100" : cfg.pill}`}
+                >
+                  {isCritical ? `High priority: ${feature}` : feature}
+                </span>
+              );
+            })}
+            {patient.features.length > 4 && (
+              <span className="px-1 text-xs text-slate-500">
+                +{patient.features.length - 4} more visible indicators
+              </span>
+            )}
+          </div>
+
+          <div className="mt-auto flex items-center gap-3 pt-5">
+            <button
+              onClick={() => onConfirm(patient.key)}
+              className={`rounded-2xl border px-4 py-2 text-sm font-medium transition-all cursor-pointer ${patient.confirmed ? "border-green-500/40 bg-green-500/10 text-green-300" : "border-white/10 bg-white/5 text-slate-200 hover:border-white/20 hover:bg-white/10"}`}
+            >
+              {patient.confirmed ? "Receiving care" : "Mark as receiving care"}
+            </button>
+            <div className="text-xs text-slate-500">
+              Snapshot updates each time this person is re-detected in the scene.
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -134,51 +190,74 @@ interface Props {
 }
 
 export default function Dashboard({ patients, onConfirm }: Props) {
-  const active         = sortByRisk(patients.filter((p) => !p.confirmed));
-  const confirmed      = patients.filter((p) => p.confirmed);
-  const criticalCount  = active.filter((p) => p.risk === "RED").length;
-
-  if (patients.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-24 text-center px-4">
-        <div className="w-14 h-14 rounded-full bg-gray-800 flex items-center justify-center mb-4">
-          <svg className="w-7 h-7 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.276A1 1 0 0121 8.67v6.66a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
-          </svg>
-        </div>
-        <p className="text-gray-400 font-medium">No patients detected yet</p>
-        <p className="text-gray-600 text-sm mt-1">Go to the Video tab to upload footage or start a live feed</p>
-      </div>
-    );
-  }
+  const usingPreview = patients.length === 0;
+  const active = sortByRisk((usingPreview ? PREVIEW_PATIENTS : patients).filter((p) => !p.confirmed));
+  const confirmed = patients.filter((p) => p.confirmed);
+  const criticalCount = active.filter((p) => p.risk === "RED").length;
+  const warningCount = active.filter((p) => p.risk === "YELLOW").length;
+  const stableCount = active.filter((p) => p.risk === "GREEN").length;
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <div className="w-full">
+      <div className="mb-6 grid gap-4 lg:grid-cols-[1.5fr_1fr]">
+        <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">Triage Dashboard</p>
+          <h2 className="mt-2 text-2xl font-semibold text-white">
+            Urgent patients surface first, with their snapshot and symptom summary side by side.
+          </h2>
+          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
+            Each card represents one detected person. The left side holds their most recent crop from the video feed,
+            and the right side summarizes visible symptoms, explanation, and triage urgency.
+          </p>
+        </div>
+
+        <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">Queue Summary</p>
+          <div className="mt-4 flex items-center gap-3 text-sm text-slate-300">
+            <span className="h-2.5 w-2.5 rounded-full bg-red-400" />
+            <span>{criticalCount} urgent case{criticalCount !== 1 ? "s" : ""}</span>
+          </div>
+          <div className="mt-2 flex items-center gap-3 text-sm text-slate-300">
+            <span className="h-2.5 w-2.5 rounded-full bg-amber-300" />
+            <span>{warningCount} concerning</span>
+          </div>
+          <div className="mt-2 flex items-center gap-3 text-sm text-slate-300">
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+            <span>{stableCount} stable</span>
+          </div>
+          {usingPreview && (
+            <p className="mt-4 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs leading-5 text-amber-100">
+              Preview mode is showing sample patients so the dashboard is presentation-ready before the first upload or live run.
+            </p>
+          )}
+        </div>
+      </div>
+
       {criticalCount > 0 && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-red-500/50 bg-red-500/10 animate-pulse mb-4">
-          <svg className="w-5 h-5 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+        <div className="mb-6 flex items-center gap-3 rounded-3xl border border-red-500/40 bg-red-500/10 px-4 py-4">
+          <svg className="h-5 w-5 shrink-0 text-red-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
           </svg>
-          <p className="text-red-400 font-bold text-sm">
-            IMMEDIATE ATTENTION REQUIRED — {criticalCount} patient{criticalCount > 1 ? "s" : ""} in critical condition
+          <p className="text-sm font-semibold text-red-100">
+            Immediate attention recommended for {criticalCount} patient{criticalCount > 1 ? "s" : ""} based on the latest visible cues.
           </p>
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-3">
-        {active.map((p) => (
-          <PatientCard key={p.key} patient={p} onConfirm={onConfirm} />
+      <div className="grid gap-5 xl:grid-cols-3">
+        {active.map((patient) => (
+          <PatientCard key={patient.key} patient={patient} onConfirm={onConfirm} />
         ))}
       </div>
 
       {confirmed.length > 0 && (
-        <div className="mt-6">
-          <p className="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-3">
+        <div className="mt-8">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">
             Receiving Treatment ({confirmed.length})
           </p>
-          <div className="grid grid-cols-3 gap-3">
-            {confirmed.map((p) => (
-              <PatientCard key={p.key} patient={p} onConfirm={onConfirm} />
+          <div className="grid gap-5 xl:grid-cols-3">
+            {confirmed.map((patient) => (
+              <PatientCard key={patient.key} patient={patient} onConfirm={onConfirm} />
             ))}
           </div>
         </div>

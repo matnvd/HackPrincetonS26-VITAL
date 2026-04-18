@@ -433,25 +433,64 @@ export default function VideoTab({ onFrameAnalyzed, onAnalysisStart }: Props) {
   const [mode, setMode] = useState<"upload" | "live">("upload");
 
   return (
-    <div>
-      <div className="flex gap-1 p-1 bg-gray-900 rounded-xl border border-gray-800 mb-6">
-        {(["upload", "live"] as const).map((m) => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
-            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-              mode === m ? "bg-gray-700 text-white" : "text-gray-500 hover:text-gray-300"
-            }`}
-          >
-            {m === "upload" ? "Upload Video" : "Live Camera"}
-          </button>
-        ))}
+    <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+      <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-6">
+        <div className="mb-6">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">Source Control</p>
+          <h2 className="mt-2 text-2xl font-semibold text-white">Choose where W.A.I.T. should watch from.</h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
+            Run the same triage pipeline on an uploaded clip or a live camera feed. Results are routed to the dashboard
+            as individual patient cards ordered by urgency.
+          </p>
+        </div>
+
+        <div className="mb-6 flex gap-1 rounded-2xl border border-white/10 bg-slate-950/70 p-1">
+          {(["upload", "live"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              className={`flex-1 rounded-xl px-4 py-3 text-sm font-medium transition-colors cursor-pointer ${
+                mode === m ? "bg-red-500/15 text-white" : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              {m === "upload" ? "Uploaded Video" : "Live Feed"}
+            </button>
+          ))}
+        </div>
+
+        {mode === "upload"
+          ? <UploadMode onFrameAnalyzed={onFrameAnalyzed} onAnalysisStart={onAnalysisStart} />
+          : <LiveMode onFrameAnalyzed={onFrameAnalyzed} onAnalysisStart={onAnalysisStart} />
+        }
       </div>
 
-      {mode === "upload"
-        ? <UploadMode onFrameAnalyzed={onFrameAnalyzed} onAnalysisStart={onAnalysisStart} />
-        : <LiveMode   onFrameAnalyzed={onFrameAnalyzed} onAnalysisStart={onAnalysisStart} />
-      }
+      <aside className="rounded-3xl border border-white/10 bg-slate-950/70 p-6">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">Operator Notes</p>
+        <div className="mt-5 space-y-4 text-sm leading-6 text-slate-300">
+          <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+            <p className="font-semibold text-white">Uploaded video</p>
+            <p className="mt-2">
+              Best for demo clips, waiting-room recordings, or repeated testing. Frames are sampled instead of streamed
+              to keep the MVP simple and API-efficient.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-white/8 bg-white/[0.03] p-4">
+            <p className="font-semibold text-white">Live feed</p>
+            <p className="mt-2">
+              Best for showing a near-real-time triage loop. The camera captures periodic frames, detects each person,
+              and updates the dashboard without requiring full streaming infrastructure.
+            </p>
+          </div>
+
+          <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-4 text-amber-50">
+            <p className="font-semibold">Design principle</p>
+            <p className="mt-2 text-sm leading-6 text-amber-100">
+              This interface prioritizes attention and explanation. It is intentionally framed as triage support, not surveillance.
+            </p>
+          </div>
+        </div>
+      </aside>
     </div>
   );
 }

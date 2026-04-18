@@ -1,1 +1,23 @@
 @import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  background: #050913;
+}
+
+body {
+  min-height: 100vh;
+  background: #050913;
+  color: #f8fafc;
+}
+
+button {
+  outline: none;
+}
+
+button:focus-visible {
+  box-shadow: 0 0 0 2px rgba(248, 113, 113, 0.7);
+}
