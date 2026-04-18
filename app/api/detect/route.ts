@@ -1,5 +1,29 @@
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
+import fs from "fs";
+import path from "path";
+
+function readStoredKeys(): { geminiKey?: string; togetherKey?: string } {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(process.cwd(), "data", "keys.json"), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function resolveGeminiKey(requestKey?: string): string {
+  if (requestKey) return requestKey;
+  const stored = readStoredKeys();
+  if (stored.geminiKey) return stored.geminiKey;
+  return process.env.GEMINI_API_KEY ?? "placeholder";
+}
+
+function resolveTogetherKey(requestKey?: string): string | undefined {
+  if (requestKey) return requestKey;
+  const stored = readStoredKeys();
+  if (stored.togetherKey) return stored.togetherKey;
+  return process.env.TOGETHER_API_KEY;
+}
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "placeholder");
 
@@ -125,22 +149,24 @@ export async function POST(req: NextRequest) {
 
     const imageData = base64.replace(/^data:image\/\w+;base64,/, "");
 
+    const effectiveGeminiKey  = resolveGeminiKey(apiKey);
+    const effectiveTogetherKey = resolveTogetherKey(togetherKey);
+
     let rawText = "";
     let usedProvider = "gemini";
 
     // ── Try Gemini first ────────────────────────────────────────────────────
     try {
-      rawText = await callGemini(imageData, apiKey || undefined);
+      rawText = await callGemini(imageData, effectiveGeminiKey);
     } catch (geminiErr) {
       const msg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
       const quotaBlocked = isZeroQuota(msg) || (msg.includes("429") && liveMode);
 
       // ── Fall back to Together AI if Gemini is quota-blocked ───────────────
-      const fallbackKey = togetherKey || process.env.TOGETHER_API_KEY;
-      if (quotaBlocked && fallbackKey) {
+      if (quotaBlocked && effectiveTogetherKey) {
         console.warn("[/api/detect] Gemini quota blocked, trying Together AI");
         usedProvider = "together";
-        rawText = await callTogetherAI(imageData, fallbackKey);
+        rawText = await callTogetherAI(imageData, effectiveTogetherKey);
       } else {
         throw geminiErr;
       }

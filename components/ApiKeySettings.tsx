@@ -30,17 +30,32 @@ function KeyInput({
     if (stored) { setValue(stored); setActive(true); }
   }, [storageKey]);
 
-  const save = () => {
+  const save = async () => {
     const t = value.trim();
     if (!t) return;
     localStorage.setItem(storageKey, t);
     setActive(true);
+    // Also persist to server so the key fully replaces the env var
+    try {
+      await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [storageKey === "gemini_api_key" ? "geminiKey" : "togetherKey"]: t }),
+      });
+    } catch { /* non-critical */ }
   };
 
-  const clear = () => {
+  const clear = async () => {
     localStorage.removeItem(storageKey);
     setValue("");
     setActive(false);
+    try {
+      await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [storageKey === "gemini_api_key" ? "geminiKey" : "togetherKey"]: "" }),
+      });
+    } catch { /* non-critical */ }
   };
 
   const masked = active && value
