@@ -1,112 +1,116 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Patient, RiskLevel } from "@/lib/patientStore";
 import { sortByRisk } from "@/lib/patientStore";
 
-const RISK_CONFIG: Record<RiskLevel, { label: string; color: string; bg: string; border: string; dot: string; pill: string }> = {
-  RED:    { label: "Urgent",     color: "text-red-400",    bg: "bg-red-500/10",    border: "border-red-500/30",    dot: "bg-red-400",    pill: "bg-red-500/20 text-red-300 border-red-500/30"    },
-  YELLOW: { label: "Concerning", color: "text-yellow-400", bg: "bg-yellow-500/10", border: "border-yellow-500/30", dot: "bg-yellow-400", pill: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" },
-  GREEN:  { label: "Stable",     color: "text-green-400",  bg: "bg-green-500/10",  border: "border-green-500/30",  dot: "bg-green-400",  pill: "bg-green-500/20 text-green-300 border-green-500/30"  },
+const RISK_CONFIG: Record<RiskLevel, { label: string; color: string; bg: string; border: string; dot: string; pill: string; banner: string }> = {
+  RED:    { label: "Urgent",     color: "text-red-400",    bg: "bg-red-500/20",    border: "border-red-500/40",    dot: "bg-red-400",    pill: "bg-red-500/20 text-red-300 border-red-500/30",    banner: "border-red-500/50 bg-red-500/10 text-red-400"    },
+  YELLOW: { label: "Concerning", color: "text-yellow-400", bg: "bg-yellow-500/20", border: "border-yellow-500/40", dot: "bg-yellow-400", pill: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30", banner: "border-yellow-500/50 bg-yellow-500/10 text-yellow-400" },
+  GREEN:  { label: "Stable",     color: "text-green-400",  bg: "bg-green-500/20",  border: "border-green-500/40",  dot: "bg-green-400",  pill: "bg-green-500/20 text-green-300 border-green-500/30",  banner: "border-green-500/50 bg-green-500/10 text-green-400"  },
 };
 
-interface Props {
-  patients: Patient[];
-  onConfirm: (key: string) => void;
+function formatElapsed(since: number): string {
+  const secs = Math.floor((Date.now() - since) / 1000);
+  if (secs < 60) return `${secs}s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ${secs % 60}s`;
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+function ElapsedTimer({ since }: { since: number }) {
+  const [elapsed, setElapsed] = useState(formatElapsed(since));
+  useEffect(() => {
+    const id = setInterval(() => setElapsed(formatElapsed(since)), 1000);
+    return () => clearInterval(id);
+  }, [since]);
+  return <span>{elapsed}</span>;
 }
 
 function PatientCard({ patient, onConfirm }: { patient: Patient; onConfirm: (key: string) => void }) {
-  const [showObs, setShowObs] = useState(false);
-  const cfg       = RISK_CONFIG[patient.risk];
-  const confirmed = patient.confirmed;
+  const cfg = RISK_CONFIG[patient.risk];
 
   return (
-    <div className={`rounded-xl border transition-opacity ${confirmed ? "opacity-40" : ""} ${cfg.bg} ${cfg.border}`}>
-      <div className="p-4">
-        <div className="flex gap-4">
-          {/* Thumbnail */}
-          <div className="shrink-0 w-20 h-20 rounded-lg overflow-hidden bg-gray-800 border border-gray-700">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={patient.thumbnail} alt="" className="w-full h-full object-cover" />
-          </div>
+    <div
+      className={`rounded-xl border overflow-hidden flex flex-col transition-opacity ${
+        patient.confirmed ? "opacity-40" : ""
+      } ${cfg.border} bg-gray-900`}
+    >
+      {/* Thumbnail with overlays */}
+      <div className="relative bg-gray-800 aspect-video shrink-0">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={patient.thumbnail} alt="" className="w-full h-full object-cover" />
 
-          {/* Info */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-start justify-between gap-2 mb-1">
-              <p className="text-gray-200 text-sm font-medium capitalize leading-snug">{patient.id}</p>
-              <span className={`shrink-0 flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border ${cfg.bg} ${cfg.border} ${cfg.color}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
-                {cfg.label}
-              </span>
-            </div>
-
-            <p className="text-gray-400 text-xs mb-2 leading-relaxed">{patient.condition}</p>
-
-            {/* Symptom pills */}
-            <div className="flex flex-wrap gap-1.5">
-              {patient.symptoms.map((s) => (
-                <span key={s} className={`px-2 py-0.5 rounded-full text-xs border ${cfg.pill}`}>
-                  {s}
-                </span>
-              ))}
-            </div>
-          </div>
+        {/* Risk badge — top left */}
+        <div className={`absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border backdrop-blur-sm ${cfg.bg} ${cfg.border} ${cfg.color}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+          {cfg.label}
         </div>
 
-        {/* Reason */}
-        <p className="text-gray-500 text-xs italic mt-3 leading-relaxed">{patient.reason}</p>
+        {/* Monitoring timer — bottom right */}
+        <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/70 text-gray-300 text-xs font-mono">
+          <ElapsedTimer since={patient.firstSeen} />
+        </div>
+
+        {/* Confirmed overlay */}
+        {patient.confirmed && (
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+            <span className="text-green-400 text-xs font-bold uppercase tracking-widest">Receiving Treatment</span>
+          </div>
+        )}
       </div>
 
-      {/* Clinical observations (collapsible) */}
-      {patient.observation && (
-        <div className="border-t border-white/5">
-          <button
-            onClick={() => setShowObs((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-2 text-xs text-gray-600 hover:text-gray-400 transition-colors cursor-pointer"
-          >
-            <span className="font-semibold uppercase tracking-wider">Clinical Observations</span>
-            <svg className={`w-3.5 h-3.5 transition-transform ${showObs ? "rotate-180" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-            </svg>
-          </button>
-          {showObs && (
-            <p className="px-4 pb-3 text-gray-500 text-xs leading-relaxed font-mono">
-              {patient.observation}
-            </p>
+      {/* Card body */}
+      <div className="p-2.5 flex flex-col gap-2 flex-1">
+        {/* Patient ID */}
+        <p className="text-gray-200 text-xs font-medium capitalize leading-snug line-clamp-2">
+          {patient.id}
+        </p>
+
+        {/* Condition */}
+        <p className="text-gray-500 text-xs leading-snug line-clamp-2">
+          {patient.condition}
+        </p>
+
+        {/* Symptom pills — top 3, with overflow count */}
+        <div className="flex flex-wrap gap-1">
+          {patient.symptoms.slice(0, 3).map((s) => (
+            <span key={s} className={`px-1.5 py-0.5 rounded text-xs border leading-none ${cfg.pill}`}>
+              {s}
+            </span>
+          ))}
+          {patient.symptoms.length > 3 && (
+            <span className="px-1.5 py-0.5 rounded text-xs border border-gray-700 text-gray-600 leading-none">
+              +{patient.symptoms.length - 3} more
+            </span>
           )}
         </div>
-      )}
 
-      {/* Confirm row */}
-      <div className="flex items-center justify-between px-4 py-3 border-t border-white/5">
-        <span className="text-gray-700 text-xs">
-          Seen {patient.seenCount}× · last updated {new Date(patient.lastSeen).toLocaleTimeString()}
-        </span>
+        {/* Mark treated */}
         <button
           onClick={() => onConfirm(patient.key)}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all cursor-pointer ${
-            confirmed
+          className={`mt-auto w-full text-xs py-1.5 rounded-lg border font-medium transition-all cursor-pointer ${
+            patient.confirmed
               ? "border-green-500/40 bg-green-500/10 text-green-400"
-              : "border-gray-700 bg-gray-800 text-gray-400 hover:border-gray-500 hover:text-gray-200"
+              : "border-gray-700 text-gray-500 hover:border-gray-500 hover:text-gray-300"
           }`}
         >
-          <span className={`w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 ${confirmed ? "bg-green-500 border-green-500" : "border-gray-600"}`}>
-            {confirmed && (
-              <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-              </svg>
-            )}
-          </span>
-          {confirmed ? "Receiving Treatment" : "Mark as Treated"}
+          {patient.confirmed ? "✓ Treated" : "Mark as Treated"}
         </button>
       </div>
     </div>
   );
 }
 
+interface Props {
+  patients: Patient[];
+  onConfirm: (key: string) => void;
+}
+
 export default function Dashboard({ patients, onConfirm }: Props) {
   const active    = sortByRisk(patients.filter((p) => !p.confirmed));
   const confirmed = patients.filter((p) => p.confirmed);
+  const criticalCount = active.filter((p) => p.risk === "RED").length;
 
   if (patients.length === 0) {
     return (
@@ -122,13 +126,11 @@ export default function Dashboard({ patients, onConfirm }: Props) {
     );
   }
 
-  const criticalCount = active.filter((p) => p.risk === "RED").length;
-
   return (
-    <div className="space-y-3">
+    <div className="max-w-5xl mx-auto">
       {/* Critical alert banner */}
       {criticalCount > 0 && (
-        <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500/15 border border-red-500/50 animate-pulse">
+        <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-red-500/50 bg-red-500/10 animate-pulse mb-4">
           <svg className="w-5 h-5 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
           </svg>
@@ -138,10 +140,12 @@ export default function Dashboard({ patients, onConfirm }: Props) {
         </div>
       )}
 
-      {/* Active patients */}
-      {active.map((p) => (
-        <PatientCard key={p.key} patient={p} onConfirm={onConfirm} />
-      ))}
+      {/* Active patients — 3-col grid */}
+      <div className="grid grid-cols-3 gap-3">
+        {active.map((p) => (
+          <PatientCard key={p.key} patient={p} onConfirm={onConfirm} />
+        ))}
+      </div>
 
       {/* Confirmed patients */}
       {confirmed.length > 0 && (
@@ -149,7 +153,7 @@ export default function Dashboard({ patients, onConfirm }: Props) {
           <p className="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-3">
             Receiving Treatment ({confirmed.length})
           </p>
-          <div className="space-y-3">
+          <div className="grid grid-cols-3 gap-3">
             {confirmed.map((p) => (
               <PatientCard key={p.key} patient={p} onConfirm={onConfirm} />
             ))}

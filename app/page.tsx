@@ -78,11 +78,13 @@ export default function App() {
       </nav>
 
       {/* Tab content — both stay mounted so the live camera interval survives tab switches */}
-      <main className="flex-1 max-w-2xl w-full mx-auto px-4 py-8">
+      <main className="flex-1 w-full px-4 py-6">
+        {/* Dashboard gets full width for the 3-col grid */}
         <div className={tab !== "dashboard" ? "hidden" : ""}>
           <Dashboard patients={patients} onConfirm={handleConfirm} />
         </div>
-        <div className={tab !== "video" ? "hidden" : ""}>
+        {/* Video input stays narrow and centered */}
+        <div className={tab !== "video" ? "hidden" : "max-w-lg mx-auto"}>
           <VideoTab
             onFrameAnalyzed={handleFrameAnalyzed}
             onAnalysisStart={handleAnalysisStart}
