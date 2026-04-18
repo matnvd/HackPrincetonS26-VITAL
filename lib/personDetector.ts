@@ -17,17 +17,25 @@ async function getDetector() {
       const vision = await FilesetResolver.forVisionTasks(
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
       );
-      detectorInstance = await ObjectDetector.createFromOptions(vision, {
+      const opts = {
         baseOptions: {
           modelAssetPath:
             "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite",
-          delegate: "GPU",
         },
-        runningMode: "IMAGE",
-        scoreThreshold: 0.35,
+        runningMode: "IMAGE" as const,
+        scoreThreshold: 0.2,
         categoryAllowlist: ["person"],
         maxResults: 3,
-      });
+      };
+      try {
+        detectorInstance = await ObjectDetector.createFromOptions(vision, {
+          ...opts, baseOptions: { ...opts.baseOptions, delegate: "GPU" },
+        });
+      } catch {
+        detectorInstance = await ObjectDetector.createFromOptions(vision, {
+          ...opts, baseOptions: { ...opts.baseOptions, delegate: "CPU" },
+        });
+      }
       return detectorInstance;
     })();
   }
