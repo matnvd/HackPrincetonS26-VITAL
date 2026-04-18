@@ -149,8 +149,7 @@ function UploadMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
 function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
   const videoRef        = useRef<HTMLVideoElement>(null);
   const streamRef       = useRef<MediaStream | null>(null);
-  const processingRef   = useRef(false);
-  const intervalRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isCapturingRef  = useRef(false); // ref so the async loop always reads current value
 
   const [camState, setCamState]       = useState<"idle" | "active" | "analyzing" | "error">("idle");
   const [isCapturing, setIsCapturing] = useState(false);
@@ -196,42 +195,39 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
     return canvas.toDataURL("image/jpeg", 0.88);
   };
 
-  const runDetection = async () => {
-    if (processingRef.current) return;
-    processingRef.current = true;
-    setLastError("");
-    try {
-      const base64 = captureFrame();
-      if (!base64) throw new Error("Frame capture returned empty — camera may not be ready.");
-      const people = await detectPeople(base64);
-      onFrameAnalyzed(people, base64);
-      setFrameCount((n) => n + 1);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      console.error("Live detection error:", err);
-      setLastError(msg);
-    } finally {
-      processingRef.current = false;
-    }
-  };
-
   const startCapture = () => {
+    isCapturingRef.current = true;
     setIsCapturing(true);
     setCamState("analyzing");
     setLastError("");
-
-    // Fire immediately so the user doesn't wait 4 seconds for the first result
-    runDetection();
-
-    intervalRef.current = setInterval(runDetection, 4000);
-
-    // Switch to dashboard so they can watch patients populate
     onAnalysisStart();
+
+    // Continuous loop: capture → send → wait 800ms → repeat.
+    // No skipped frames — each call starts immediately after the previous response.
+    const loop = async () => {
+      while (isCapturingRef.current) {
+        setLastError("");
+        try {
+          const base64 = captureFrame();
+          if (!base64) throw new Error("Camera not ready — retrying…");
+          const people = await detectPeople(base64);
+          onFrameAnalyzed(people, base64);
+          setFrameCount((n) => n + 1);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "Unknown error";
+          console.error("Live detection error:", msg);
+          setLastError(msg);
+        }
+        // Brief pause between calls to avoid rate-limiting
+        await new Promise((r) => setTimeout(r, 800));
+      }
+    };
+
+    loop();
   };
 
   const stopCapture = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
-    intervalRef.current = null;
+    isCapturingRef.current = false;
     setIsCapturing(false);
     if (camState === "analyzing") setCamState("active");
   };
@@ -239,10 +235,9 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      stopCapture();
+      isCapturingRef.current = false;
       streamRef.current?.getTracks().forEach((t) => t.stop());
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (

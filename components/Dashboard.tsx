@@ -122,8 +122,22 @@ export default function Dashboard({ patients, onConfirm }: Props) {
     );
   }
 
+  const criticalCount = active.filter((p) => p.risk === "RED").length;
+
   return (
     <div className="space-y-3">
+      {/* Critical alert banner */}
+      {criticalCount > 0 && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500/15 border border-red-500/50 animate-pulse">
+          <svg className="w-5 h-5 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          </svg>
+          <p className="text-red-400 font-bold text-sm">
+            IMMEDIATE ATTENTION REQUIRED — {criticalCount} patient{criticalCount > 1 ? "s" : ""} in critical condition
+          </p>
+        </div>
+      )}
+
       {/* Active patients */}
       {active.map((p) => (
         <PatientCard key={p.key} patient={p} onConfirm={onConfirm} />
