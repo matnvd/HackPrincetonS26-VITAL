@@ -89,8 +89,8 @@ export default function HospitalTriageAI() {
     if (!video || !canvas || video.readyState < 2) return null;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
-    canvas.width = 480;
-    canvas.height = 270;
+    canvas.width = 320; // increase if doing longer distance demo
+    canvas.height = 180; // increase if doing longer distance demo
     ctx.drawImage(video, 0, 0, 480, 270);
     return canvas.toDataURL("image/jpeg", 0.65);
   }, []);
