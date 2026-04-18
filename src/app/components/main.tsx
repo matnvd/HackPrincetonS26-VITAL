@@ -89,6 +89,15 @@ export default function HospitalTriageAI() {
   const [events, setEvents] = useState<Event[]>([]);
   const [stats, setStats] = useState<{ analyzed: number; skipped: number; lastAt: string | null }>({ analyzed: 0, skipped: 0, lastAt: null });
 
+  // simulate mode — video files from public/video_samples/
+  const [videoFiles, setVideoFiles] = useState<string[]>([]);
+  const [simulating, setSimulating] = useState<string | null>(null); // filename currently simulating
+  const [simAnalyzing, setSimAnalyzing] = useState(false); // shows the analyzing indicator on the sim tile
+  const simIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const simVideoRef = useRef<HTMLVideoElement | null>(null);
+  const simCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const simAnalyzingRef = useRef(false); // guard against concurrent sim API calls
+
   // keep ref in sync so interval callbacks always see latest state
   useEffect(() => { activeCamerasRef.current = activeCameras; }, [activeCameras]);
 
@@ -105,6 +114,11 @@ export default function HospitalTriageAI() {
         .map((d, i) => ({ deviceId: d.deviceId, label: d.label || `Camera ${i + 1}` }));
       setDevices(cams);
     });
+  }, []);
+
+  // fetch available video files from public/video_samples/
+  useEffect(() => {
+    fetch("/api/videos").then((r) => r.json()).then((d) => setVideoFiles(d.videos ?? []));
   }, []);
 
   const captureFrame = useCallback((deviceId: string): string | null => {
@@ -134,7 +148,12 @@ export default function HospitalTriageAI() {
 
   // IMPORTANT: if motion, send to api route.ts and analyze returned json
   const analyzeFrame = useCallback(async (deviceId: string, cameraLabel: string, frameData: string) => {
-    setActiveCameras((s) => s[deviceId] ? { ...s, [deviceId]: { ...s[deviceId], analyzing: true } } : s);
+    if (deviceId === "sim") {
+      setSimAnalyzing(true);
+      simAnalyzingRef.current = true;
+    } else {
+      setActiveCameras((s) => s[deviceId] ? { ...s, [deviceId]: { ...s[deviceId], analyzing: true } } : s);
+    }
     try {
       const base64 = frameData.split(",")[1];
       const res = await fetch("/api/analyze", {
@@ -171,8 +190,45 @@ export default function HospitalTriageAI() {
     } catch (err) {
       addEvent(`[${cameraLabel}] Analysis error: ` + (err instanceof Error ? err.message : String(err)), "error");
     } finally {
-      setActiveCameras((s) => s[deviceId] ? { ...s, [deviceId]: { ...s[deviceId], analyzing: false } } : s);
+      if (deviceId === "sim") {
+        setSimAnalyzing(false);
+        simAnalyzingRef.current = false;
+      } else {
+        setActiveCameras((s) => s[deviceId] ? { ...s, [deviceId]: { ...s[deviceId], analyzing: false } } : s);
+      }
     }
+  }, [addEvent]);
+
+  const startSimulation = useCallback((filename: string) => {
+    if (simIntervalRef.current) clearInterval(simIntervalRef.current);
+    const video = simVideoRef.current;
+    if (!video) return;
+    video.src = `/video_samples/${filename}`;
+    video.currentTime = 0;
+    video.play();
+    setSimulating(filename);
+    addEvent(`Simulating: ${filename}`, "info");
+
+    simIntervalRef.current = setInterval(() => {
+      // skip if previous analysis still running — identical behavior to live feed
+      if (simAnalyzingRef.current) return;
+      const canvas = simCanvasRef.current;
+      if (!video || !canvas || video.readyState < 2 || video.ended) return;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      canvas.width = 320; // increase if doing longer distance demo
+      canvas.height = 180; // increase if doing longer distance demo
+      ctx.drawImage(video, 0, 0, 320, 180);
+      const frameData = canvas.toDataURL("image/jpeg", 0.65);
+      analyzeFrame("sim", filename, frameData);
+    }, SAMPLE_INTERVAL_MS);
+  }, [addEvent, analyzeFrame]);
+
+  const stopSimulation = useCallback(() => {
+    if (simIntervalRef.current) clearInterval(simIntervalRef.current);
+    if (simVideoRef.current) { simVideoRef.current.pause(); simVideoRef.current.src = ""; }
+    setSimulating(null);
+    addEvent("Simulation stopped", "muted");
   }, [addEvent]);
 
   const startCamera = useCallback(async (device: CameraDevice) => {
@@ -269,32 +325,68 @@ export default function HospitalTriageAI() {
             )}
           </div>
 
-          {/* Live camera feeds grid — 1 col for single cam, 2 cols for multiple */}
-          {Object.values(activeCameras).length > 0 ? (
-            <div style={{ display: "grid", gridTemplateColumns: Object.values(activeCameras).length === 1 ? "1fr" : "1fr 1fr", gap: "12px" }}>
-              {Object.values(activeCameras).map((cam) => (
-                <div key={cam.deviceId} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
-                  <video ref={(el) => { videoRefs.current[cam.deviceId] = el; if (el && el.srcObject !== cam.stream) { el.srcObject = cam.stream; el.play(); } }} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted playsInline autoPlay />
-                  <canvas ref={(el) => { canvasRefs.current[cam.deviceId] = el; }} style={{ display: "none" }} />
-                  <div style={{ position: "absolute", top: 8, left: 8, display: "flex", alignItems: "center", gap: "6px", background: "var(--color-background-danger)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
-                    <div className="live-dot" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--color-text-danger)" }} />
-                    <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-danger)" }}>{cam.label}</span>
+          {/* Simulate mode — play a video file through the same analysis pipeline */}
+          {videoFiles.length > 0 && (
+            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", padding: "14px" }}>
+              <div style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: "10px" }}>Simulate from video file</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                {videoFiles.map((f) => {
+                  const active = simulating === f;
+                  return (
+                    <button key={f} onClick={() => active ? stopSimulation() : startSimulation(f)}
+                      style={{ padding: "6px 14px", borderRadius: "var(--border-radius-md)", border: active ? "0.5px solid var(--color-border-danger)" : "0.5px solid var(--color-border-secondary)", cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 500, background: active ? "var(--color-background-danger)" : "var(--color-background-secondary)", color: active ? "var(--color-text-danger)" : "var(--color-text-primary)" }}>
+                      {active ? "Stop" : "▶"} · {f}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Live camera feeds grid — always rendered so simVideoRef is always mounted */}
+          <div style={{ display: "grid", gridTemplateColumns: Object.values(activeCameras).length >= 1 ? "1fr 1fr" : "1fr", gap: "12px" }}>
+            {Object.values(activeCameras).map((cam) => (
+              <div key={cam.deviceId} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
+                <video ref={(el) => { videoRefs.current[cam.deviceId] = el; if (el && el.srcObject !== cam.stream) { el.srcObject = cam.stream; el.play(); } }} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted playsInline autoPlay />
+                <canvas ref={(el) => { canvasRefs.current[cam.deviceId] = el; }} style={{ display: "none" }} />
+                <div style={{ position: "absolute", top: 8, left: 8, display: "flex", alignItems: "center", gap: "6px", background: "var(--color-background-danger)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
+                  <div className="live-dot" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--color-text-danger)" }} />
+                  <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-danger)" }}>{cam.label}</span>
+                </div>
+                {cam.analyzing && (
+                  <div style={{ position: "absolute", top: 8, right: 8, display: "flex", alignItems: "center", gap: "5px", background: "var(--color-background-info)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
+                    <svg className="spin" width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" stroke="var(--color-text-info)" strokeWidth="1.5" strokeDasharray="6 8" fill="none"/></svg>
+                    <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-info)" }}>Analyzing</span>
                   </div>
-                  {cam.analyzing && (
+                )}
+              </div>
+            ))}
+
+            {/* Simulation tile — always in DOM so ref is available; hidden via CSS when inactive */}
+            <div style={{ display: simulating ? "block" : (Object.values(activeCameras).length === 0 ? "block" : "none"), background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
+              <video ref={simVideoRef} style={{ width: "100%", height: "100%", objectFit: "cover", display: simulating ? "block" : "none" }} muted playsInline loop />
+              <canvas ref={simCanvasRef} style={{ display: "none" }} />
+              {simulating ? (
+                <>
+                  <div style={{ position: "absolute", top: 8, left: 8, display: "flex", alignItems: "center", gap: "6px", background: "var(--color-background-warning)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
+                    <div className="live-dot" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--color-text-warning)" }} />
+                    <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-warning)" }}>SIM · {simulating}</span>
+                  </div>
+                  {simAnalyzing && (
                     <div style={{ position: "absolute", top: 8, right: 8, display: "flex", alignItems: "center", gap: "5px", background: "var(--color-background-info)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
                       <svg className="spin" width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" stroke="var(--color-text-info)" strokeWidth="1.5" strokeDasharray="6 8" fill="none"/></svg>
                       <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-info)" }}>Analyzing</span>
                     </div>
                   )}
+                </>
+              ) : Object.values(activeCameras).length === 0 ? (
+                <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+                  <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="2" y="8" width="28" height="24" rx="3" stroke="var(--color-border-secondary)" strokeWidth="1.5"/><path d="M30 15l8-5v20l-8-5V15z" stroke="var(--color-border-secondary)" strokeWidth="1.5"/><circle cx="16" cy="20" r="5" stroke="var(--color-border-secondary)" strokeWidth="1.5"/></svg>
+                  <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>No active cameras</span>
                 </div>
-              ))}
+              ) : null}
             </div>
-          ) : (
-            <div style={{ background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", aspectRatio: "16/9", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "8px" }}>
-              <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="2" y="8" width="28" height="24" rx="3" stroke="var(--color-border-secondary)" strokeWidth="1.5"/><path d="M30 15l8-5v20l-8-5V15z" stroke="var(--color-border-secondary)" strokeWidth="1.5"/><circle cx="16" cy="20" r="5" stroke="var(--color-border-secondary)" strokeWidth="1.5"/></svg>
-              <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>No active cameras</span>
-            </div>
-          )}
+          </div>
 
           {patients.length > 0 && (
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
