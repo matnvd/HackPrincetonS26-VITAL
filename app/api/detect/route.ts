@@ -69,7 +69,7 @@ function isZeroQuota(msg: string) {
 }
 
 // Try multiple Gemini models in order — some may have limit:0 while others work
-const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-1.5-pro"];
+const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite"];
 
 async function callGemini(imageData: string, apiKey?: string): Promise<string> {
   const client = apiKey ? new GoogleGenerativeAI(apiKey) : genAI;
