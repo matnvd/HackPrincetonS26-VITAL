@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { extractFrames } from "@/lib/extractFrames";
 import type { DetectedPerson } from "@/lib/patientStore";
+import FaceOverlay from "@/components/FaceOverlay";
 
 interface Props {
   onFrameAnalyzed: (people: DetectedPerson[], frameBase64: string) => void;
@@ -248,6 +249,7 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
       {/* Camera preview */}
       <div className="relative rounded-xl overflow-hidden bg-gray-900 border border-gray-800 aspect-video flex items-center justify-center">
         <video ref={videoRef} muted playsInline className="w-full h-full object-cover" />
+        <FaceOverlay videoRef={videoRef} active={camState === "active" || camState === "analyzing"} />
 
         {camState === "idle" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
