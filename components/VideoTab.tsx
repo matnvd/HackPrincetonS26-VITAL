@@ -28,7 +28,10 @@ async function base64ToCanvas(base64: string): Promise<HTMLCanvasElement> {
   return canvas;
 }
 
-async function analyzePersonCrop(cropBase64: string): Promise<{
+async function analyzePersonCrop(
+  cropBase64: string,
+  liveMode = false
+): Promise<{
   description: string;
   features: string[];
   risk: "GREEN" | "YELLOW" | "RED";
@@ -37,7 +40,7 @@ async function analyzePersonCrop(cropBase64: string): Promise<{
   const res = await fetch("/api/detect", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ base64: cropBase64, apiKey: getStoredApiKey() }),
+    body: JSON.stringify({ base64: cropBase64, apiKey: getStoredApiKey(), liveMode }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error ?? `Detect API error ${res.status}`);
@@ -46,22 +49,24 @@ async function analyzePersonCrop(cropBase64: string): Promise<{
 
 async function analyzeFrame(
   canvas: HTMLCanvasElement,
-  frameBase64: string
+  frameBase64: string,
+  liveMode = false,
+  onStep?: (msg: string) => void
 ): Promise<DetectedPerson[]> {
-  // 1. Detect people in the frame
+  onStep?.("detecting people…");
   let detections = await detectPersonsInCanvas(canvas).catch(() => []);
 
-  // 2. Fallback: treat full frame as one person if detection returns nothing
   if (detections.length === 0) {
     detections = [{ bbox: { x: 0, y: 0, w: canvas.width, h: canvas.height }, cropBase64: frameBase64 }];
   }
 
-  // 3. Analyze each person's crop (sequential to respect rate limits)
+  onStep?.(`calling Gemini for ${detections.length} person${detections.length > 1 ? "s" : ""}…`);
+
   const people: DetectedPerson[] = [];
   for (let i = 0; i < detections.length; i++) {
     const det = detections[i];
     try {
-      const analysis = await analyzePersonCrop(det.cropBase64);
+      const analysis = await analyzePersonCrop(det.cropBase64, liveMode);
       people.push({
         id: `person_${i + 1}`,
         bbox: det.bbox,
@@ -72,9 +77,11 @@ async function analyzeFrame(
         reason: analysis.reason,
       });
     } catch (err) {
-      console.error(`Person ${i + 1} analysis failed:`, err);
+      const msg = err instanceof Error ? err.message : String(err);
+      const isQuota = msg.includes("429") || msg.toLowerCase().includes("quota") || msg.toLowerCase().includes("rate");
+      if (isQuota) onStep?.("⚠ rate limited — switch API key or wait 60 s");
+      console.error(`Person ${i + 1} analysis failed:`, msg);
     }
-    // 300 ms between sequential Gemini calls to stay within rate limit
     if (i < detections.length - 1) await new Promise((r) => setTimeout(r, 300));
   }
 
@@ -212,12 +219,13 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
   const streamRef       = useRef<MediaStream | null>(null);
   const isCapturingRef  = useRef(false);
 
-  const [camState, setCamState]         = useState<"idle" | "active" | "analyzing" | "error">("idle");
-  const [isCapturing, setIsCapturing]   = useState(false);
-  const [frameCount, setFrameCount]     = useState(0);
-  const [lastDetectTime, setLastDetect] = useState<number | null>(null);
-  const [errorMsg, setErrorMsg]         = useState("");
-  const [lastError, setLastError]       = useState("");
+  const [camState, setCamState]           = useState<"idle" | "active" | "analyzing" | "error">("idle");
+  const [isCapturing, setIsCapturing]     = useState(false);
+  const [frameCount, setFrameCount]       = useState(0);
+  const [successCount, setSuccessCount]   = useState(0);
+  const [lastDetectTime, setLastDetect]   = useState<number | null>(null);
+  const [errorMsg, setErrorMsg]           = useState("");
+  const [cycleStatus, setCycleStatus]     = useState("");
 
   const startCamera = async () => {
     try {
@@ -261,7 +269,9 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
     isCapturingRef.current = true;
     setIsCapturing(true);
     setCamState("analyzing");
-    setLastError("");
+    setCycleStatus("");
+    setFrameCount(0);
+    setSuccessCount(0);
     onAnalysisStart();
 
     // gemini-2.0-flash free tier = 15 RPM per key.
@@ -272,19 +282,26 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
     const loop = async () => {
       while (isCapturingRef.current) {
         const cycleStart = Date.now();
-        setLastError("");
+        setCycleStatus("capturing frame…");
+        let cycleOk = false;
         try {
           const frame = captureFrameCanvas();
-          if (!frame) throw new Error("Camera not ready — retrying…");
-          const people = await analyzeFrame(frame.canvas, frame.base64);
+          if (!frame) { setCycleStatus("camera not ready — retrying…"); throw new Error("Camera not ready"); }
+          const people = await analyzeFrame(frame.canvas, frame.base64, true, setCycleStatus);
           onFrameAnalyzed(people, frame.base64);
-          setFrameCount((n) => n + 1);
-          setLastDetect(Date.now());
+          if (people.length > 0) {
+            setSuccessCount((n) => n + 1);
+            setLastDetect(Date.now());
+          }
+          cycleOk = true;
         } catch (err) {
           const msg = err instanceof Error ? err.message : "Unknown error";
           console.error("Live detection error:", msg);
-          setLastError(msg);
+          setCycleStatus(`error: ${msg.slice(0, 60)}`);
         }
+        // Always increment attempts so user can see the loop is running
+        setFrameCount((n) => n + 1);
+        if (cycleOk) setCycleStatus("done — waiting for next cycle…");
         const elapsed = Date.now() - cycleStart;
         await new Promise((r) => setTimeout(r, Math.max(200, MIN_CYCLE_MS - elapsed)));
       }
@@ -370,17 +387,26 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
       </div>
 
       {camState === "analyzing" && (
-        <div className="flex items-center justify-between text-xs text-gray-600">
-          <span>{frameCount} frame{frameCount !== 1 ? "s" : ""} analyzed · results on Dashboard tab</span>
-          {lastDetectTime && (
-            <span className="font-mono">last scan {Math.round((Date.now() - lastDetectTime) / 1000)}s ago</span>
+        <div className="flex flex-col gap-1.5">
+          {/* Cycle step indicator */}
+          <div className="flex items-center justify-between text-xs text-gray-500">
+            <span className="font-mono truncate">{cycleStatus || "starting…"}</span>
+            {lastDetectTime && (
+              <span className="font-mono shrink-0 ml-2">last result {Math.round((Date.now() - lastDetectTime) / 1000)}s ago</span>
+            )}
+          </div>
+          {/* Attempt / success counts */}
+          <div className="flex items-center gap-3 text-xs text-gray-600">
+            <span>{frameCount} attempt{frameCount !== 1 ? "s" : ""}</span>
+            <span className="text-green-600">{successCount} successful</span>
+            <span className="ml-auto text-gray-700">results → Dashboard tab</span>
+          </div>
+          {/* Rate limit warning */}
+          {cycleStatus.includes("rate limited") && (
+            <div className="px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs">
+              <span className="font-semibold">API quota hit.</span> Click the 🔑 Key button in the header to switch to a different Gemini API key.
+            </div>
           )}
-        </div>
-      )}
-
-      {lastError && (
-        <div className="px-3 py-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs">
-          {lastError}
         </div>
       )}
     </div>

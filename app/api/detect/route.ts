@@ -109,14 +109,14 @@ async function generateWithRetry(
 
 export async function POST(req: NextRequest) {
   try {
-    const { base64, apiKey } = await req.json();
+    const { base64, apiKey, liveMode } = await req.json();
     if (!base64) return NextResponse.json({ error: "Missing base64" }, { status: 400 });
 
     const imageData = base64.replace(/^data:image\/\w+;base64,/, "");
 
     const client = apiKey ? new GoogleGenerativeAI(apiKey) : genAI;
     const model = client.getGenerativeModel({
-      model: "gemini-2.0-flash",
+      model: "gemini-2.0-flash-lite",
       systemInstruction: SYSTEM_INSTRUCTION,
       generationConfig: {
         responseMimeType: "application/json",
@@ -126,10 +126,12 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // liveMode=true: fail fast (1 attempt) so the camera loop moves on quickly
+    const maxAttempts = liveMode ? 1 : 3;
     const text = await generateWithRetry(model, [
       "Analyze this person and provide a triage assessment. Observe their posture, consciousness, breathing, skin, and any visible injuries or distress.",
       { inlineData: { mimeType: "image/jpeg", data: imageData } },
-    ]);
+    ], maxAttempts);
 
     const jsonText = text.replace(/^```json\s*/i, "").replace(/```$/m, "").trim();
     return NextResponse.json(JSON.parse(jsonText));
