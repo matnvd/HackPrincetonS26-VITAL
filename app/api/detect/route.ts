@@ -86,10 +86,17 @@ Examples:
 ━━━ RULES ━━━
 1. Count people first. Array length must equal people count.
 2. Report ALL visible people including background — GREEN if stable.
-3. Medical terminology for symptoms: "diaphoresis" not "sweating", "pallor" not "looks pale", "tachypnea" not "breathing fast".
+3. Medical terminology: "diaphoresis" not "sweating", "pallor" not "pale", "tachypnea" not "breathing fast".
 4. Write the "observation" field BEFORE deciding risk — think step by step.
-5. Symptoms: 2–5 specific clinical signs.
-6. When uncertain between RED and YELLOW → assign RED. Overtriage saves lives.
+5. Symptoms: 2–5 signs, listed in ORDER from most to least life-threatening (worst first).
+6. NEVER include contradictory symptoms for the same person. Examples of forbidden pairs:
+   - "conscious" AND "unconscious"
+   - "alert and oriented" AND "altered consciousness"
+   - "breathing normally" AND "labored breathing" or "respiratory arrest"
+   - "ambulatory" AND "immobile" or "lying unresponsive"
+   - "no distress" AND "acute distress"
+   If two signs contradict, include ONLY the more severe one.
+7. When uncertain between RED and YELLOW → assign RED. Overtriage saves lives.
 `.trim();
 
 // ─── Response schema ─────────────────────────────────────────────────────────

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { Patient, RiskLevel } from "@/lib/patientStore";
-import { sortByRisk } from "@/lib/patientStore";
+import { sortByRisk, symptomSeverity } from "@/lib/patientStore";
 
 const RISK_CONFIG: Record<RiskLevel, { label: string; color: string; bg: string; border: string; dot: string; pill: string; banner: string }> = {
   RED:    { label: "Urgent",     color: "text-red-400",    bg: "bg-red-500/20",    border: "border-red-500/40",    dot: "bg-red-400",    pill: "bg-red-500/20 text-red-300 border-red-500/30",    banner: "border-red-500/50 bg-red-500/10 text-red-400"    },
@@ -72,16 +72,26 @@ function PatientCard({ patient, onConfirm }: { patient: Patient; onConfirm: (key
           {patient.condition}
         </p>
 
-        {/* Symptom pills — top 3, with overflow count */}
-        <div className="flex flex-wrap gap-1">
-          {patient.symptoms.slice(0, 3).map((s) => (
-            <span key={s} className={`px-1.5 py-0.5 rounded text-xs border leading-none ${cfg.pill}`}>
-              {s}
-            </span>
-          ))}
-          {patient.symptoms.length > 3 && (
-            <span className="px-1.5 py-0.5 rounded text-xs border border-gray-700 text-gray-600 leading-none">
-              +{patient.symptoms.length - 3} more
+        {/* Symptoms — sorted by severity, critical one pinned on top */}
+        <div className="flex flex-col gap-1">
+          {patient.symptoms.slice(0, 4).map((s, i) => {
+            const isCritical = i === 0 && symptomSeverity(s) >= 3;
+            return (
+              <span
+                key={s}
+                className={`px-1.5 py-0.5 rounded text-xs border leading-snug ${
+                  isCritical
+                    ? "bg-red-500/30 text-red-200 border-red-500/50 font-semibold"
+                    : cfg.pill
+                }`}
+              >
+                {isCritical && "⚠ "}{s}
+              </span>
+            );
+          })}
+          {patient.symptoms.length > 4 && (
+            <span className="px-1.5 py-0.5 text-xs text-gray-600 leading-none">
+              +{patient.symptoms.length - 4} more
             </span>
           )}
         </div>
