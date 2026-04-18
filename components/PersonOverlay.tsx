@@ -118,12 +118,25 @@ export default function PersonOverlay({ videoRef, active }: Props) {
           result.detections.slice(0, 5).forEach((det: any, i: number) => {
             const bb = det.boundingBox;
             if (!bb) return;
-            drawPersonBox(
-              ctx,
-              bb.originX * sx, bb.originY * sy,
-              bb.width   * sx, bb.height  * sy,
-              PERSON_COLORS[i % PERSON_COLORS.length], i + 1
-            );
+
+            // BlazeFace returns face bbox. Expand it to approximate the full body:
+            //   width  ×2.4  (shoulders are ~2.4× face width)
+            //   height ×5.5  (standing body is ~5-6× head height)
+            //   shift up 0.3× face height so forehead isn't cropped
+            const fx = bb.originX * sx;
+            const fy = bb.originY * sy;
+            const fw = bb.width   * sx;
+            const fh = bb.height  * sy;
+
+            const bw = fw * 2.4;
+            const bh = fh * 5.5;
+            const bx = Math.max(0, fx + fw / 2 - bw / 2);
+            const by = Math.max(0, fy - fh * 0.3);
+            const clampW = Math.min(canvas.width  - bx, bw);
+            const clampH = Math.min(canvas.height - by, bh);
+
+            drawPersonBox(ctx, bx, by, clampW, clampH,
+              PERSON_COLORS[i % PERSON_COLORS.length], i + 1);
           });
         } catch { /* skip frame */ }
       }

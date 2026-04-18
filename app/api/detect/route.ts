@@ -1,143 +1,154 @@
 import { GoogleGenerativeAI, SchemaType } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "placeholder");
 
-const SYSTEM_INSTRUCTION = `
-You are an expert emergency medical triage AI with the clinical knowledge of a board-certified emergency medicine physician.
+// ─── Shared prompt ────────────────────────────────────────────────────────────
 
-This image shows a SINGLE PERSON, already cropped from a larger scene. Your task is to assess this one person's medical status.
+const TRIAGE_PROMPT = `You are an expert emergency medical triage AI.
+This image shows a SINGLE PERSON. Assess their medical status.
 
-━━━ OBSERVATION PROTOCOL ━━━
-Systematically note:
-• Posture & mobility — standing, sitting, lying, slumped, writhing, still
-• Consciousness — alert, confused, drowsy, unresponsive, eyes open/closed
-• Breathing — visible respiratory effort, labored, shallow, rapid, absent, gasping
-• Skin — pallor, cyanosis (blue lips/fingers/nails), diaphoresis, flushing
-• Visible injuries — active bleeding, wounds, burns, deformity
-• Behavior — grimacing, clutching chest/abdomen, calling for help, agitation
+Observe:
+• Posture — standing, sitting, lying, slumped, hunched, shaking, falling
+• Consciousness — alert, confused, drowsy, unresponsive
+• Breathing — normal, labored, shallow, rapid, absent
+• Skin — pallor, cyanosis, diaphoresis
+• Injuries — bleeding, wounds, burns, deformity
+• Behavior — grimacing, clutching chest/abdomen, agitation, distress
 
-━━━ TRIAGE CRITERIA ━━━
+Triage levels:
+RED = life-threatening (unconscious, no breathing, severe hemorrhage, seizure, shock)
+YELLOW = urgent but stable (significant distress, moderate bleeding, stroke signs, chest pain)
+GREEN = stable (alert, ambulatory, minor issues only)
 
-RED — Immediate (life-threatening):
-• Unconscious, unresponsive, or GCS < 9
-• Absent, agonal, or severely labored breathing; airway obstruction; choking
-• Uncontrolled major hemorrhage
-• Signs of decompensated shock: severe pallor + diaphoresis + altered consciousness
-• Active seizure
-• Suspected cardiac arrest, acute MI
-• Penetrating trauma to chest, abdomen, or head
+When uncertain RED vs YELLOW → assign RED. Overtriage saves lives.
 
-YELLOW — Urgent (serious but stable):
-• Conscious but in significant distress
-• Moderate controllable bleeding
-• Suspected fracture, dislocation, or spinal injury
-• Stroke signs — facial droop, arm weakness, speech difficulty
-• Altered mental status but responsive
-• Moderate-to-severe respiratory distress
-• Chest pain without loss of consciousness
+Respond with ONLY valid JSON, no markdown:
+{"description":"one sentence assessment","features":["feature1","feature2"],"risk":"GREEN","reason":"clinical justification"}`;
 
-GREEN — Non-urgent (stable):
-• Ambulatory, walking without difficulty
-• Alert and fully oriented
-• Minor lacerations, abrasions, sprains
-• Normal skin color, comfortable breathing
-
-━━━ RULES ━━━
-1. Report ONLY what you can directly observe in this cropped image.
-2. When uncertain between RED and YELLOW → assign RED. Overtriage saves lives.
-3. features: 2–5 specific visible signs, ordered from most to least severe.
-4. description: one clear sentence summarizing the person's medical state.
-5. NEVER include contradictory features (e.g., "conscious" AND "unconscious").
-`.trim();
+// ─── Gemini ───────────────────────────────────────────────────────────────────
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const RESPONSE_SCHEMA: any = {
+const GEMINI_SCHEMA: any = {
   type: SchemaType.OBJECT,
   properties: {
-    description: {
-      type: SchemaType.STRING,
-      description: "One-sentence medical assessment of this person's current state",
-    },
-    features: {
-      type: SchemaType.ARRAY,
-      description: "2–5 specific visible signs ordered from most to least severe",
-      items: { type: SchemaType.STRING },
-    },
-    risk: {
-      type: SchemaType.STRING,
-      enum: ["GREEN", "YELLOW", "RED"],
-      description: "Triage risk level",
-    },
-    reason: {
-      type: SchemaType.STRING,
-      description: "Clinical justification for the assigned risk level",
-    },
+    description: { type: SchemaType.STRING },
+    features:    { type: SchemaType.ARRAY, items: { type: SchemaType.STRING } },
+    risk:        { type: SchemaType.STRING, enum: ["GREEN", "YELLOW", "RED"] },
+    reason:      { type: SchemaType.STRING },
   },
   required: ["description", "features", "risk", "reason"],
 };
 
-function parse429Delay(message: string): number | null {
-  const match = message.match(/retry in ([\d.]+)s/i);
-  return match ? Math.ceil(parseFloat(match[1]) * 1000) + 500 : null;
+function isZeroQuota(msg: string) {
+  return msg.includes("limit: 0") || (msg.includes("429") && msg.includes("limit: 0"));
 }
 
-async function generateWithRetry(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  model: any,
-  content: unknown[],
-  maxAttempts = 3
-): Promise<string> {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      const result = await model.generateContent(content);
-      return result.response.text();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      const is429 = msg.includes("429");
-      if (is429 && attempt < maxAttempts) {
-        const delay = parse429Delay(msg) ?? 15_000;
-        console.warn(`[/api/detect] 429 on attempt ${attempt}, retrying in ${delay}ms`);
-        await new Promise((r) => setTimeout(r, delay));
-      } else {
-        throw err;
-      }
-    }
-  }
-  throw new Error("Max retries exceeded");
+async function callGemini(imageData: string, apiKey?: string): Promise<string> {
+  const client = apiKey ? new GoogleGenerativeAI(apiKey) : genAI;
+  const model = client.getGenerativeModel({
+    model: "gemini-2.0-flash",
+    systemInstruction: TRIAGE_PROMPT,
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: GEMINI_SCHEMA,
+      temperature: 0.1,
+    },
+  });
+  const result = await model.generateContent([
+    "Analyze this person's triage status.",
+    { inlineData: { mimeType: "image/jpeg", data: imageData } },
+  ]);
+  return result.response.text();
 }
+
+// ─── Together AI (fallback) ───────────────────────────────────────────────────
+// Free $25 credits on signup at api.together.ai — no credit card required.
+// Model: Llama 3.2 11B Vision, supports image input.
+
+async function callTogetherAI(imageData: string, apiKey: string): Promise<string> {
+  const res = await fetch("https://api.together.xyz/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: TRIAGE_PROMPT + "\n\nIMPORTANT: Reply with ONLY the JSON object, nothing else." },
+            { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageData}` } },
+          ],
+        },
+      ],
+      max_tokens: 300,
+      temperature: 0.1,
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Together AI ${res.status}: ${err.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content ?? "";
+}
+
+// ─── Route handler ────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   try {
-    const { base64, apiKey, liveMode } = await req.json();
+    const { base64, apiKey, togetherKey, liveMode } = await req.json();
     if (!base64) return NextResponse.json({ error: "Missing base64" }, { status: 400 });
 
     const imageData = base64.replace(/^data:image\/\w+;base64,/, "");
 
-    const client = apiKey ? new GoogleGenerativeAI(apiKey) : genAI;
-    const model = client.getGenerativeModel({
-      model: "gemini-2.0-flash",
-      systemInstruction: SYSTEM_INSTRUCTION,
-      generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: RESPONSE_SCHEMA,
-        temperature: 0.1,
-        topP: 0.8,
-      },
-    });
+    let rawText = "";
+    let usedProvider = "gemini";
 
-    // liveMode=true: fail fast (1 attempt) so the camera loop moves on quickly
-    const maxAttempts = liveMode ? 1 : 3;
-    const text = await generateWithRetry(model, [
-      "Analyze this person and provide a triage assessment. Observe their posture, consciousness, breathing, skin, and any visible injuries or distress.",
-      { inlineData: { mimeType: "image/jpeg", data: imageData } },
-    ], maxAttempts);
+    // ── Try Gemini first ────────────────────────────────────────────────────
+    try {
+      rawText = await callGemini(imageData, apiKey || undefined);
+    } catch (geminiErr) {
+      const msg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
+      const quotaBlocked = isZeroQuota(msg) || (msg.includes("429") && liveMode);
 
-    const jsonText = text.replace(/^```json\s*/i, "").replace(/```$/m, "").trim();
-    return NextResponse.json(JSON.parse(jsonText));
+      // ── Fall back to Together AI if Gemini is quota-blocked ───────────────
+      const fallbackKey = togetherKey || process.env.TOGETHER_API_KEY;
+      if (quotaBlocked && fallbackKey) {
+        console.warn("[/api/detect] Gemini quota blocked, trying Together AI");
+        usedProvider = "together";
+        rawText = await callTogetherAI(imageData, fallbackKey);
+      } else {
+        throw geminiErr;
+      }
+    }
+
+    // ── Parse JSON from either provider ──────────────────────────────────────
+    const jsonText = rawText
+      .replace(/^```json\s*/i, "").replace(/```$/m, "")
+      .replace(/[\s\S]*?({[\s\S]*})[\s\S]*$/, "$1")  // extract first JSON object if wrapped in text
+      .trim();
+
+    const parsed = JSON.parse(jsonText);
+    return NextResponse.json({ ...parsed, _provider: usedProvider });
+
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[/api/detect]", message);
+
+    // Surface zero-quota errors clearly
+    if (isZeroQuota(message)) {
+      return NextResponse.json({
+        error: "ZERO_QUOTA",
+        detail: "Your Gemini API key has limit:0. Get a key from aistudio.google.com (not Cloud Console), or add a Together AI key from api.together.ai.",
+      }, { status: 429 });
+    }
+
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

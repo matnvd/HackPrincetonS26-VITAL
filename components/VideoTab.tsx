@@ -5,7 +5,7 @@ import { extractFrames } from "@/lib/extractFrames";
 import type { DetectedPerson } from "@/lib/patientStore";
 import { detectPersonsInCanvas } from "@/lib/personDetector";
 import PersonOverlay from "@/components/PersonOverlay";
-import { getStoredApiKey } from "@/components/ApiKeySettings";
+import { getStoredApiKey, getStoredTogetherKey } from "@/components/ApiKeySettings";
 
 interface Props {
   onFrameAnalyzed: (people: DetectedPerson[], frameBase64: string) => void;
@@ -40,7 +40,7 @@ async function analyzePersonCrop(
   const res = await fetch("/api/detect", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ base64: cropBase64, apiKey: getStoredApiKey(), liveMode }),
+    body: JSON.stringify({ base64: cropBase64, apiKey: getStoredApiKey(), togetherKey: getStoredTogetherKey(), liveMode }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error ?? `Detect API error ${res.status}`);
