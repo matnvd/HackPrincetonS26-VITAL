@@ -2,12 +2,20 @@
 
 import { useEffect, useState } from "react";
 import type { Patient, RiskLevel } from "@/lib/patientStore";
-import { sortByRisk, symptomSeverity } from "@/lib/patientStore";
+import { sortByRisk, featureSeverity } from "@/lib/patientStore";
 
-const RISK_CONFIG: Record<RiskLevel, { label: string; color: string; bg: string; border: string; dot: string; pill: string; banner: string }> = {
-  RED:    { label: "Urgent",     color: "text-red-400",    bg: "bg-red-500/20",    border: "border-red-500/40",    dot: "bg-red-400",    pill: "bg-red-500/20 text-red-300 border-red-500/30",    banner: "border-red-500/50 bg-red-500/10 text-red-400"    },
-  YELLOW: { label: "Concerning", color: "text-yellow-400", bg: "bg-yellow-500/20", border: "border-yellow-500/40", dot: "bg-yellow-400", pill: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30", banner: "border-yellow-500/50 bg-yellow-500/10 text-yellow-400" },
-  GREEN:  { label: "Stable",     color: "text-green-400",  bg: "bg-green-500/20",  border: "border-green-500/40",  dot: "bg-green-400",  pill: "bg-green-500/20 text-green-300 border-green-500/30",  banner: "border-green-500/50 bg-green-500/10 text-green-400"  },
+const RISK_CONFIG: Record<RiskLevel, { label: string; color: string; bg: string; border: string; dot: string; pill: string }> = {
+  RED:    { label: "Urgent",      color: "text-red-400",    bg: "bg-red-500/20",    border: "border-red-500/40",    dot: "bg-red-400",    pill: "bg-red-500/20 text-red-300 border-red-500/30"    },
+  YELLOW: { label: "Concerning",  color: "text-yellow-400", bg: "bg-yellow-500/20", border: "border-yellow-500/40", dot: "bg-yellow-400", pill: "bg-yellow-500/20 text-yellow-300 border-yellow-500/30" },
+  GREEN:  { label: "Stable",      color: "text-green-400",  bg: "bg-green-500/20",  border: "border-green-500/40",  dot: "bg-green-400",  pill: "bg-green-500/20 text-green-300 border-green-500/30"  },
+};
+
+// Person index → color used in the live overlay
+const PERSON_COLORS: Record<string, string> = {
+  person_1: "#00ff88",
+  person_2: "#38bdf8",
+  person_3: "#fb923c",
+  person_4: "#a78bfa",
 };
 
 function formatElapsed(since: number): string {
@@ -28,7 +36,9 @@ function ElapsedTimer({ since }: { since: number }) {
 }
 
 function PatientCard({ patient, onConfirm }: { patient: Patient; onConfirm: (key: string) => void }) {
-  const cfg = RISK_CONFIG[patient.risk];
+  const cfg        = RISK_CONFIG[patient.risk];
+  const accentColor = PERSON_COLORS[patient.id] ?? "#ffffff";
+  const personNum   = patient.id.replace("person_", "");
 
   return (
     <div
@@ -36,23 +46,30 @@ function PatientCard({ patient, onConfirm }: { patient: Patient; onConfirm: (key
         patient.confirmed ? "opacity-40" : ""
       } ${cfg.border} bg-gray-900`}
     >
-      {/* Thumbnail with overlays */}
+      {/* Thumbnail */}
       <div className="relative bg-gray-800 aspect-video shrink-0">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={patient.thumbnail} alt="" className="w-full h-full object-cover" />
 
-        {/* Risk badge — top left */}
-        <div className={`absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border backdrop-blur-sm ${cfg.bg} ${cfg.border} ${cfg.color}`}>
+        {/* Person badge — top left, colored per person */}
+        <div
+          className="absolute top-2 left-2 px-2 py-0.5 rounded-full text-xs font-bold border backdrop-blur-sm"
+          style={{ color: accentColor, borderColor: accentColor + "60", backgroundColor: accentColor + "20" }}
+        >
+          PERSON {personNum}
+        </div>
+
+        {/* Risk badge — top right */}
+        <div className={`absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold border backdrop-blur-sm ${cfg.bg} ${cfg.border} ${cfg.color}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
           {cfg.label}
         </div>
 
-        {/* Monitoring timer — bottom right */}
+        {/* Elapsed timer */}
         <div className="absolute bottom-2 right-2 px-1.5 py-0.5 rounded bg-black/70 text-gray-300 text-xs font-mono">
           <ElapsedTimer since={patient.firstSeen} />
         </div>
 
-        {/* Confirmed overlay */}
         {patient.confirmed && (
           <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
             <span className="text-green-400 text-xs font-bold uppercase tracking-widest">Receiving Treatment</span>
@@ -62,41 +79,40 @@ function PatientCard({ patient, onConfirm }: { patient: Patient; onConfirm: (key
 
       {/* Card body */}
       <div className="p-2.5 flex flex-col gap-2 flex-1">
-        {/* Patient ID */}
-        <p className="text-gray-200 text-xs font-medium capitalize leading-snug line-clamp-2">
-          {patient.id}
+        {/* Description */}
+        <p className="text-gray-300 text-xs leading-snug line-clamp-2">
+          {patient.description}
         </p>
 
-        {/* Condition */}
-        <p className="text-gray-500 text-xs leading-snug line-clamp-2">
-          {patient.condition}
+        {/* Reason / justification */}
+        <p className="text-gray-600 text-xs leading-snug line-clamp-2 italic">
+          {patient.reason}
         </p>
 
-        {/* Symptoms — sorted by severity, critical one pinned on top */}
+        {/* Feature tags */}
         <div className="flex flex-col gap-1">
-          {patient.symptoms.slice(0, 4).map((s, i) => {
-            const isCritical = i === 0 && symptomSeverity(s) >= 3;
+          {patient.features.slice(0, 4).map((f, i) => {
+            const isCritical = i === 0 && featureSeverity(f) >= 3;
             return (
               <span
-                key={s}
+                key={f}
                 className={`px-1.5 py-0.5 rounded text-xs border leading-snug ${
                   isCritical
                     ? "bg-red-500/30 text-red-200 border-red-500/50 font-semibold"
                     : cfg.pill
                 }`}
               >
-                {isCritical && "⚠ "}{s}
+                {isCritical && "⚠ "}{f}
               </span>
             );
           })}
-          {patient.symptoms.length > 4 && (
+          {patient.features.length > 4 && (
             <span className="px-1.5 py-0.5 text-xs text-gray-600 leading-none">
-              +{patient.symptoms.length - 4} more
+              +{patient.features.length - 4} more
             </span>
           )}
         </div>
 
-        {/* Mark treated */}
         <button
           onClick={() => onConfirm(patient.key)}
           className={`mt-auto w-full text-xs py-1.5 rounded-lg border font-medium transition-all cursor-pointer ${
@@ -118,9 +134,9 @@ interface Props {
 }
 
 export default function Dashboard({ patients, onConfirm }: Props) {
-  const active    = sortByRisk(patients.filter((p) => !p.confirmed));
-  const confirmed = patients.filter((p) => p.confirmed);
-  const criticalCount = active.filter((p) => p.risk === "RED").length;
+  const active         = sortByRisk(patients.filter((p) => !p.confirmed));
+  const confirmed      = patients.filter((p) => p.confirmed);
+  const criticalCount  = active.filter((p) => p.risk === "RED").length;
 
   if (patients.length === 0) {
     return (
@@ -138,7 +154,6 @@ export default function Dashboard({ patients, onConfirm }: Props) {
 
   return (
     <div className="max-w-5xl mx-auto">
-      {/* Critical alert banner */}
       {criticalCount > 0 && (
         <div className="flex items-center gap-3 px-4 py-3 rounded-xl border border-red-500/50 bg-red-500/10 animate-pulse mb-4">
           <svg className="w-5 h-5 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -150,14 +165,12 @@ export default function Dashboard({ patients, onConfirm }: Props) {
         </div>
       )}
 
-      {/* Active patients — 3-col grid */}
       <div className="grid grid-cols-3 gap-3">
         {active.map((p) => (
           <PatientCard key={p.key} patient={p} onConfirm={onConfirm} />
         ))}
       </div>
 
-      {/* Confirmed patients */}
       {confirmed.length > 0 && (
         <div className="mt-6">
           <p className="text-xs font-semibold uppercase tracking-widest text-gray-600 mb-3">

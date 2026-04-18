@@ -19,7 +19,7 @@ Write a concise incident triage report. Respond with ONLY valid JSON, no markdow
 `.trim();
 
 export async function POST(req: NextRequest) {
-  const { results } = await req.json();
+  const { results, apiKey } = await req.json();
 
   if (!Array.isArray(results) || results.length === 0) {
     return NextResponse.json({ error: "Missing results array" }, { status: 400 });
@@ -31,7 +31,8 @@ export async function POST(req: NextRequest) {
     )
     .join("\n");
 
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+  const client = apiKey ? new GoogleGenerativeAI(apiKey) : genAI;
+  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
   const result = await model.generateContent(PROMPT(framesSummary));
 
   const text = result.response.text().trim();

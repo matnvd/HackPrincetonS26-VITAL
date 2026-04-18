@@ -1,12 +1,20 @@
 export type RiskLevel = "GREEN" | "YELLOW" | "RED";
 
+export interface BBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface DetectedPerson {
   id: string;
-  observation: string;
-  condition: string;
-  symptoms: string[];
+  bbox: BBox;
+  features: string[];
   risk: RiskLevel;
+  description: string;
   reason: string;
+  cropBase64: string;
 }
 
 export interface Patient extends DetectedPerson {
@@ -20,108 +28,43 @@ export interface Patient extends DetectedPerson {
 
 const RISK_RANK: Record<RiskLevel, number> = { GREEN: 0, YELLOW: 1, RED: 2 };
 
-// Pairs where only one can be true at a time — keep the more alarming one
-const CONTRADICTION_PAIRS: [string, string][] = [
-  ["conscious",           "unconscious"],
-  ["alert",               "unresponsive"],
-  ["alert and oriented",  "altered consciousness"],
-  ["responsive",          "unresponsive"],
-  ["breathing normally",  "respiratory arrest"],
-  ["breathing normally",  "absent breathing"],
-  ["breathing normally",  "labored breathing"],
-  ["breathing normally",  "agonal breathing"],
-  ["ambulatory",          "immobile"],
-  ["ambulatory",          "lying"],
-  ["ambulatory",          "supine"],
-  ["stable",              "decompensating"],
-  ["normal skin color",   "pallor"],
-  ["normal skin color",   "cyanosis"],
-  ["no distress",         "acute distress"],
-  ["oriented",            "confused"],
-  ["oriented",            "disoriented"],
-];
-
-function removeSelf(s: string): boolean {
-  // Filter out vague/useless entries
-  const bad = ["none", "n/a", "unknown", "normal", "stable"];
-  return !bad.includes(s.toLowerCase().trim());
-}
-
-/** Remove symptoms that contradict any symptom in `dominant` list */
-function filterContradictions(base: string[], dominant: string[]): string[] {
-  return base.filter((sym) => {
-    const symL = sym.toLowerCase();
-    for (const [a, b] of CONTRADICTION_PAIRS) {
-      const inDominant = dominant.some((d) => d.toLowerCase().includes(a) || d.toLowerCase().includes(b));
-      const symIsOther = symL.includes(a) || symL.includes(b);
-      if (inDominant && symIsOther) {
-        // Check if sym itself is already in dominant (keep it) or is the opposite (remove it)
-        const symInDominant = dominant.some((d) => d.toLowerCase() === symL);
-        if (!symInDominant) return false;
-      }
-    }
-    return true;
-  });
-}
-
-/** Merge two symptom lists, letting `fresh` take precedence on contradictions */
-function mergeSymptoms(existing: string[], fresh: string[]): string[] {
-  const cleanFresh = fresh.filter(removeSelf);
-  // Keep existing symptoms that don't contradict the fresh list
-  const surviving = filterContradictions(existing, cleanFresh);
-  // Union, dedup by lowercased value
-  const seen = new Set(cleanFresh.map((s) => s.toLowerCase()));
-  for (const s of surviving) {
-    if (!seen.has(s.toLowerCase())) {
-      seen.add(s.toLowerCase());
-      cleanFresh.push(s);
-    }
-  }
-  return cleanFresh;
-}
-
-// ── Severity ordering ─────────────────────────────────────────────────────────
-// Higher number = shown first
-
 const SEVERITY_KEYWORDS: [number, string[]][] = [
-  [5, ["cardiac arrest", "respiratory arrest", "not breathing", "absent breathing", "agonal", "unconscious", "unresponsive", "choking", "airway obstruction", "anaphylaxis", "hemorrhage", "exsanguinating"]],
-  [4, ["cyanosis", "cyanotic", "pallor", "diaphoresis", "seizure", "decompensated shock", "gcs"]],
-  [3, ["labored breathing", "tachypnea", "altered consciousness", "altered mental", "stroke", "facial droop", "arm weakness"]],
-  [2, ["tachycardia", "hypotension", "chest pain", "abdominal guarding", "severe pain", "vomiting blood"]],
-  [1, ["moderate", "distress", "confusion", "disoriented", "nausea", "weakness", "swelling"]],
+  [5, ["cardiac arrest", "respiratory arrest", "not breathing", "absent breathing", "agonal", "unconscious", "unresponsive", "choking", "airway obstruction", "hemorrhage"]],
+  [4, ["cyanosis", "cyanotic", "pallor", "diaphoresis", "seizure", "decompensated shock"]],
+  [3, ["labored breathing", "tachypnea", "altered consciousness", "stroke", "facial droop"]],
+  [2, ["tachycardia", "chest pain", "abdominal guarding", "severe pain"]],
+  [1, ["moderate", "distress", "confusion", "disoriented", "nausea", "weakness"]],
 ];
 
-export function symptomSeverity(symptom: string): number {
-  const s = symptom.toLowerCase();
+export function featureSeverity(feature: string): number {
+  const s = feature.toLowerCase();
   for (const [score, keywords] of SEVERITY_KEYWORDS) {
     if (keywords.some((k) => s.includes(k))) return score;
   }
   return 0;
 }
 
-export function sortSymptoms(symptoms: string[]): string[] {
-  return [...symptoms].sort((a, b) => symptomSeverity(b) - symptomSeverity(a));
-}
+// Keep alias for any remaining Dashboard references
+export const symptomSeverity = featureSeverity;
 
-// ── Identity matching ──────────────────────────────────────────────────────────
-
-function significant(s: string): string[] {
-  const stop = new Set(["a", "an", "the", "in", "on", "with", "and", "or", "of", "wearing", "has", "is", "are"]);
-  return s.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter((w) => w.length > 2 && !stop.has(w));
+export function sortFeatures(features: string[]): string[] {
+  return [...features].sort((a, b) => featureSeverity(b) - featureSeverity(a));
 }
 
 function samePatient(a: string, b: string): boolean {
-  const wa = significant(a);
-  const wb = significant(b);
+  if (a === b) return true;
+  const stop = new Set(["a", "an", "the", "in", "on", "with", "and", "or", "of"]);
+  const words = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !stop.has(w));
+  const wa = words(a);
+  const wb = words(b);
   return wa.filter((w) => wb.includes(w)).length >= 2;
 }
-
-// ── Merge ──────────────────────────────────────────────────────────────────────
 
 export function mergePatients(
   existing: Patient[],
   incoming: DetectedPerson[],
-  frameBase64: string
+  _frameBase64: string
 ): Patient[] {
   const now = Date.now();
   const next = existing.map((p) => ({ ...p }));
@@ -132,27 +75,26 @@ export function mergePatients(
     if (idx >= 0) {
       const p = next[idx];
       const escalating = RISK_RANK[person.risk] >= RISK_RANK[p.risk];
+      const merged = sortFeatures([...new Set([...(escalating ? person.features : p.features), ...(escalating ? p.features : person.features)])]);
 
       next[idx] = {
         ...p,
-        observation: person.observation,
-        condition:   person.condition,
-        // When risk escalates, fresh symptoms take full precedence.
-        // When same level, merge but let fresh list win contradictions.
-        symptoms: escalating
-          ? sortSymptoms(mergeSymptoms(p.symptoms, person.symptoms))
-          : sortSymptoms(mergeSymptoms(person.symptoms, p.symptoms)),
-        risk:   escalating ? person.risk   : p.risk,
+        bbox: person.bbox,
+        features: merged,
+        risk: escalating ? person.risk : p.risk,
+        description: escalating ? person.description : p.description,
         reason: escalating ? person.reason : p.reason,
+        cropBase64: person.cropBase64,
+        thumbnail: person.cropBase64,
         lastSeen: now,
         seenCount: p.seenCount + 1,
       };
     } else {
       next.push({
         ...person,
-        symptoms: sortSymptoms(person.symptoms.filter(removeSelf)),
-        key: significant(person.id).join(" "),
-        thumbnail: frameBase64,
+        features: sortFeatures(person.features),
+        key: person.id,
+        thumbnail: person.cropBase64,
         firstSeen: now,
         lastSeen: now,
         confirmed: false,

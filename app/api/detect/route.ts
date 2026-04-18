@@ -3,150 +3,79 @@ import { NextRequest, NextResponse } from "next/server";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
-// ─── System instruction ──────────────────────────────────────────────────────
-// Separated from the image content so Gemini treats it as persistent context.
-
 const SYSTEM_INSTRUCTION = `
 You are an expert emergency medical triage AI with the clinical knowledge of a board-certified emergency medicine physician.
 
-Your task is to analyze a video frame and assess every visible person's medical status with high accuracy.
+This image shows a SINGLE PERSON, already cropped from a larger scene. Your task is to assess this one person's medical status.
 
 ━━━ OBSERVATION PROTOCOL ━━━
-Before classifying, systematically note for each person:
+Systematically note:
 • Posture & mobility — standing, sitting, lying, slumped, writhing, still
-• Consciousness — alert and oriented, confused, drowsy, unresponsive, eyes open/closed
+• Consciousness — alert, confused, drowsy, unresponsive, eyes open/closed
 • Breathing — visible respiratory effort, labored, shallow, rapid, absent, gasping
-• Skin — pallor, cyanosis (blue lips/fingers/nails), diaphoresis (sweating), flushing
-• Visible injuries — active bleeding, wounds, burns, deformity, guarding a body part
-• Behavior — distress signals: grimacing, clutching chest/abdomen, calling for help, agitation
+• Skin — pallor, cyanosis (blue lips/fingers/nails), diaphoresis, flushing
+• Visible injuries — active bleeding, wounds, burns, deformity
+• Behavior — grimacing, clutching chest/abdomen, calling for help, agitation
 
 ━━━ TRIAGE CRITERIA ━━━
 
-RED — Immediate (life-threatening; needs intervention in seconds to minutes):
+RED — Immediate (life-threatening):
 • Unconscious, unresponsive, or GCS < 9
 • Absent, agonal, or severely labored breathing; airway obstruction; choking
 • Uncontrolled major hemorrhage
-• Signs of decompensated shock: severe pallor + diaphoresis + altered consciousness + rapid/absent pulse
+• Signs of decompensated shock: severe pallor + diaphoresis + altered consciousness
 • Active seizure
-• Suspected cardiac arrest, acute MI (clutching chest + collapse + pallor)
+• Suspected cardiac arrest, acute MI
 • Penetrating trauma to chest, abdomen, or head
-• Severe burns > 20% BSA or airway burns
-• Suspected anaphylaxis with airway compromise
 
-YELLOW — Urgent (serious but currently stable; needs care within minutes to 1 hour):
-• Conscious but in significant distress, visibly suffering
+YELLOW — Urgent (serious but stable):
+• Conscious but in significant distress
 • Moderate controllable bleeding
 • Suspected fracture, dislocation, or spinal injury
-• Stroke signs — FAST: facial droop, arm weakness, speech difficulty
-• Altered mental status but responsive to voice/touch
-• Moderate-to-severe respiratory distress (breathing but with effort/accessory muscles)
-• Suspected poisoning or overdose — conscious
-• Vomiting blood or bile
-• Severe abdominal pain with guarding or rigidity
+• Stroke signs — facial droop, arm weakness, speech difficulty
+• Altered mental status but responsive
+• Moderate-to-severe respiratory distress
 • Chest pain without loss of consciousness
-• Early signs of shock (pallor, tachycardia, anxious) — not yet decompensated
 
-GREEN — Non-urgent (stable; can wait safely):
+GREEN — Non-urgent (stable):
 • Ambulatory, walking without difficulty
-• Alert and fully oriented, communicating clearly
-• Minor lacerations, abrasions, sprains, contusions
-• Mild-to-moderate localized pain, no systemic signs
-• Normal skin color, no diaphoresis
-• Comfortable respiratory pattern
-• Appears healthy or only mildly unwell
-
-━━━ CRITICAL: ONE ENTRY PER PERSON ━━━
-Before writing JSON, COUNT the number of distinct individuals in the frame.
-Your "people" array MUST contain exactly that many entries — one per person, no exceptions.
-
-NEVER merge two people into a single entry, even if they are:
-- standing next to each other
-- touching or overlapping
-- wearing similar clothing
-- partially obscured
-
-If you see 2 people → 2 entries. 3 people → 3 entries. And so on.
-
-To distinguish people who appear together, ALWAYS include their position in the frame as part of the id:
-  left / right / center / foreground / background / near door / on floor / against wall / seated left
-
-Examples of correctly separated entries when two people are in frame:
-  { "id": "young man grey hoodie left foreground", ... }
-  { "id": "woman dark hair red jacket right side standing", ... }
-
-━━━ ID GENERATION RULE ━━━
-Format: [age group] [gender] [clothing color+type] [1 physical feature] [frame position]
-- ALWAYS end with frame position so people in the same frame have unique ids
-- Use the EXACT same id string when you see the same person in a later frame
-Examples:
-  "elderly woman white hair green gown lying floor left"
-  "young man black hoodie beard center frame"
-  "middle-aged woman blonde red scrubs standing right"
+• Alert and fully oriented
+• Minor lacerations, abrasions, sprains
+• Normal skin color, comfortable breathing
 
 ━━━ RULES ━━━
-1. Count people first. Array length must equal people count.
-2. Report ALL visible people including background — GREEN if stable.
-3. Medical terminology: "diaphoresis" not "sweating", "pallor" not "pale", "tachypnea" not "breathing fast".
-4. Write the "observation" field BEFORE deciding risk — think step by step.
-5. Symptoms: 2–5 signs, listed in ORDER from most to least life-threatening (worst first).
-6. NEVER include contradictory symptoms for the same person. Examples of forbidden pairs:
-   - "conscious" AND "unconscious"
-   - "alert and oriented" AND "altered consciousness"
-   - "breathing normally" AND "labored breathing" or "respiratory arrest"
-   - "ambulatory" AND "immobile" or "lying unresponsive"
-   - "no distress" AND "acute distress"
-   If two signs contradict, include ONLY the more severe one.
-7. When uncertain between RED and YELLOW → assign RED. Overtriage saves lives.
+1. Report ONLY what you can directly observe in this cropped image.
+2. When uncertain between RED and YELLOW → assign RED. Overtriage saves lives.
+3. features: 2–5 specific visible signs, ordered from most to least severe.
+4. description: one clear sentence summarizing the person's medical state.
+5. NEVER include contradictory features (e.g., "conscious" AND "unconscious").
 `.trim();
 
-// ─── Response schema ─────────────────────────────────────────────────────────
-// Forces Gemini to always return valid, structured JSON — no markdown stripping needed.
-
-const RESPONSE_SCHEMA = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const RESPONSE_SCHEMA: any = {
   type: SchemaType.OBJECT,
   properties: {
-    people: {
+    description: {
+      type: SchemaType.STRING,
+      description: "One-sentence medical assessment of this person's current state",
+    },
+    features: {
       type: SchemaType.ARRAY,
-      description: "Every person visible in the frame",
-      items: {
-        type: SchemaType.OBJECT,
-        properties: {
-          id: {
-            type: SchemaType.STRING,
-            description: "Repeatable physical fingerprint for cross-frame identity tracking",
-          },
-          observation: {
-            type: SchemaType.STRING,
-            description: "Raw clinical observations before interpretation — posture, breathing, skin, consciousness, injuries",
-          },
-          condition: {
-            type: SchemaType.STRING,
-            description: "One-sentence medical assessment of their current state",
-          },
-          symptoms: {
-            type: SchemaType.ARRAY,
-            description: "2–5 specific clinical signs observed",
-            items: { type: SchemaType.STRING },
-          },
-          risk: {
-            type: SchemaType.STRING,
-            enum: ["GREEN", "YELLOW", "RED"],
-            description: "Triage risk level",
-          },
-          reason: {
-            type: SchemaType.STRING,
-            description: "Clinical justification for the assigned risk level",
-          },
-        },
-        required: ["id", "observation", "condition", "symptoms", "risk", "reason"],
-      },
+      description: "2–5 specific visible signs ordered from most to least severe",
+      items: { type: SchemaType.STRING },
+    },
+    risk: {
+      type: SchemaType.STRING,
+      enum: ["GREEN", "YELLOW", "RED"],
+      description: "Triage risk level",
+    },
+    reason: {
+      type: SchemaType.STRING,
+      description: "Clinical justification for the assigned risk level",
     },
   },
-  required: ["people"],
+  required: ["description", "features", "risk", "reason"],
 };
-
-// ─── Retry helper ────────────────────────────────────────────────────────────
-// Gemini 429 responses include a suggested retryDelay — honour it exactly.
 
 function parse429Delay(message: string): number | null {
   const match = message.match(/retry in ([\d.]+)s/i);
@@ -166,7 +95,6 @@ async function generateWithRetry(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       const is429 = msg.includes("429");
-
       if (is429 && attempt < maxAttempts) {
         const delay = parse429Delay(msg) ?? 15_000;
         console.warn(`[/api/detect] 429 on attempt ${attempt}, retrying in ${delay}ms`);
@@ -179,17 +107,15 @@ async function generateWithRetry(
   throw new Error("Max retries exceeded");
 }
 
-// ─── Route handler ────────────────────────────────────────────────────────────
-
 export async function POST(req: NextRequest) {
   try {
-    const { base64 } = await req.json();
+    const { base64, apiKey } = await req.json();
     if (!base64) return NextResponse.json({ error: "Missing base64" }, { status: 400 });
 
     const imageData = base64.replace(/^data:image\/\w+;base64,/, "");
 
-    // gemini-2.0-flash: 15 RPM on free tier vs 5 RPM for gemini-2.5-flash
-    const model = genAI.getGenerativeModel({
+    const client = apiKey ? new GoogleGenerativeAI(apiKey) : genAI;
+    const model = client.getGenerativeModel({
       model: "gemini-2.0-flash",
       systemInstruction: SYSTEM_INSTRUCTION,
       generationConfig: {
@@ -201,7 +127,7 @@ export async function POST(req: NextRequest) {
     });
 
     const text = await generateWithRetry(model, [
-      "Analyze this video frame. Identify and triage every visible person. Apply the triage criteria precisely.",
+      "Analyze this person and provide a triage assessment. Observe their posture, consciousness, breathing, skin, and any visible injuries or distress.",
       { inlineData: { mimeType: "image/jpeg", data: imageData } },
     ]);
 

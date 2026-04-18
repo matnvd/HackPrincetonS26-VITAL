@@ -18,16 +18,16 @@ Respond with ONLY valid JSON in this exact shape, no markdown:
 }`;
 
 export async function POST(req: NextRequest) {
-  const { base64 } = await req.json();
+  const { base64, apiKey } = await req.json();
 
   if (!base64 || typeof base64 !== "string") {
     return NextResponse.json({ error: "Missing base64 image" }, { status: 400 });
   }
 
-  // Strip the data URL prefix if present: "data:image/jpeg;base64,<data>"
   const imageData = base64.replace(/^data:image\/\w+;base64,/, "");
 
-  const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+  const client = apiKey ? new GoogleGenerativeAI(apiKey) : genAI;
+  const model = client.getGenerativeModel({ model: "gemini-2.0-flash" });
 
   const result = await model.generateContent([
     PROMPT,

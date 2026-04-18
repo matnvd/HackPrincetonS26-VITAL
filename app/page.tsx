@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Dashboard from "@/components/Dashboard";
 import VideoTab from "@/components/VideoTab";
+import ApiKeySettings from "@/components/ApiKeySettings";
 import { mergePatients } from "@/lib/patientStore";
 import type { Patient, DetectedPerson } from "@/lib/patientStore";
 
@@ -38,18 +39,21 @@ export default function App() {
           <p className="text-gray-600 text-xs">Watchful AI Incident Triage</p>
         </div>
 
-        {/* Live stats */}
-        {patients.length > 0 && (
-          <div className="flex items-center gap-3 text-xs text-gray-500">
-            {activeCount > 0 && (
-              <span className="flex items-center gap-1.5 text-red-400 font-semibold">
-                <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
-                {activeCount} awaiting care
-              </span>
-            )}
-            <span>{patients.filter((p) => p.confirmed).length} treated</span>
-          </div>
-        )}
+        {/* Right side: live stats + API key settings */}
+        <div className="flex items-center gap-3">
+          {patients.length > 0 && (
+            <div className="flex items-center gap-3 text-xs text-gray-500">
+              {activeCount > 0 && (
+                <span className="flex items-center gap-1.5 text-red-400 font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                  {activeCount} awaiting care
+                </span>
+              )}
+              <span>{patients.filter((p) => p.confirmed).length} treated</span>
+            </div>
+          )}
+          <ApiKeySettings />
+        </div>
       </header>
 
       {/* Tab bar */}

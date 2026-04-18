@@ -3,32 +3,92 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { extractFrames } from "@/lib/extractFrames";
 import type { DetectedPerson } from "@/lib/patientStore";
-import FaceOverlay from "@/components/FaceOverlay";
+import { detectPersonsInCanvas } from "@/lib/personDetector";
+import PersonOverlay from "@/components/PersonOverlay";
+import { getStoredApiKey } from "@/components/ApiKeySettings";
 
 interface Props {
   onFrameAnalyzed: (people: DetectedPerson[], frameBase64: string) => void;
   onAnalysisStart: () => void;
 }
 
-async function detectPeople(base64: string): Promise<DetectedPerson[]> {
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+async function base64ToCanvas(base64: string): Promise<HTMLCanvasElement> {
+  const img = new Image();
+  img.src = base64;
+  await new Promise<void>((resolve, reject) => {
+    img.onload  = () => resolve();
+    img.onerror = () => reject(new Error("Image load failed"));
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width  = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext("2d")!.drawImage(img, 0, 0);
+  return canvas;
+}
+
+async function analyzePersonCrop(cropBase64: string): Promise<{
+  description: string;
+  features: string[];
+  risk: "GREEN" | "YELLOW" | "RED";
+  reason: string;
+}> {
   const res = await fetch("/api/detect", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ base64 }),
+    body: JSON.stringify({ base64: cropBase64, apiKey: getStoredApiKey() }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error ?? `Detect API error ${res.status}`);
-  return data.people ?? [];
+  return data;
+}
+
+async function analyzeFrame(
+  canvas: HTMLCanvasElement,
+  frameBase64: string
+): Promise<DetectedPerson[]> {
+  // 1. Detect people in the frame
+  let detections = await detectPersonsInCanvas(canvas).catch(() => []);
+
+  // 2. Fallback: treat full frame as one person if detection returns nothing
+  if (detections.length === 0) {
+    detections = [{ bbox: { x: 0, y: 0, w: canvas.width, h: canvas.height }, cropBase64: frameBase64 }];
+  }
+
+  // 3. Analyze each person's crop (sequential to respect rate limits)
+  const people: DetectedPerson[] = [];
+  for (let i = 0; i < detections.length; i++) {
+    const det = detections[i];
+    try {
+      const analysis = await analyzePersonCrop(det.cropBase64);
+      people.push({
+        id: `person_${i + 1}`,
+        bbox: det.bbox,
+        cropBase64: det.cropBase64,
+        description: analysis.description,
+        features: analysis.features ?? [],
+        risk: analysis.risk,
+        reason: analysis.reason,
+      });
+    } catch (err) {
+      console.error(`Person ${i + 1} analysis failed:`, err);
+    }
+    // 300 ms between sequential Gemini calls to stay within rate limit
+    if (i < detections.length - 1) await new Promise((r) => setTimeout(r, 300));
+  }
+
+  return people;
 }
 
 // ─── Upload Mode ─────────────────────────────────────────────────────────────
 
 function UploadMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
-  const [file, setFile]           = useState<File | null>(null);
-  const [dragging, setDragging]   = useState(false);
-  const [phase, setPhase]         = useState<"idle" | "extracting" | "analyzing" | "done">("idle");
-  const [progress, setProgress]   = useState({ current: 0, total: 0 });
-  const inputRef                  = useRef<HTMLInputElement>(null);
+  const [file, setFile]         = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [phase, setPhase]       = useState<"idle" | "extracting" | "analyzing" | "done">("idle");
+  const [progress, setProgress] = useState({ current: 0, total: 0 });
+  const inputRef                = useRef<HTMLInputElement>(null);
 
   const handleFile = (f: File) => { if (f.type.startsWith("video/")) setFile(f); };
 
@@ -51,10 +111,11 @@ function UploadMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
     for (let i = 0; i < frames.length; i++) {
       setProgress({ current: i + 1, total: frames.length });
       try {
-        const people = await detectPeople(frames[i].base64);
+        const canvas = await base64ToCanvas(frames[i].base64);
+        const people = await analyzeFrame(canvas, frames[i].base64);
         onFrameAnalyzed(people, frames[i].base64);
       } catch (err) {
-        console.error(`Frame ${i + 1} detection failed:`, err);
+        console.error(`Frame ${i + 1} failed:`, err);
       }
       if (i < frames.length - 1) await new Promise((r) => setTimeout(r, 500));
     }
@@ -129,7 +190,6 @@ function UploadMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
         </p>
       )}
 
-      {/* Analyze button */}
       <button
         onClick={handleAnalyze}
         disabled={!file || busy}
@@ -150,7 +210,7 @@ function UploadMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
 function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
   const videoRef        = useRef<HTMLVideoElement>(null);
   const streamRef       = useRef<MediaStream | null>(null);
-  const isCapturingRef  = useRef(false); // ref so the async loop always reads current value
+  const isCapturingRef  = useRef(false);
 
   const [camState, setCamState]         = useState<"idle" | "active" | "analyzing" | "error">("idle");
   const [isCapturing, setIsCapturing]   = useState(false);
@@ -183,19 +243,18 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
     setIsCapturing(false);
   };
 
-  const captureFrame = (): string | null => {
+  const captureFrameCanvas = (): { canvas: HTMLCanvasElement; base64: string } | null => {
     const video = videoRef.current;
     if (!video || video.readyState < 2) return null;
-    const canvas = document.createElement("canvas");
-    // 640px balances detection quality vs. payload size — smaller = faster Gemini round-trip
     const scale = Math.min(1, 640 / video.videoWidth);
+    const canvas = document.createElement("canvas");
     canvas.width  = Math.round(video.videoWidth  * scale);
     canvas.height = Math.round(video.videoHeight * scale);
     const ctx = canvas.getContext("2d")!;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL("image/jpeg", 0.88);
+    return { canvas, base64: canvas.toDataURL("image/jpeg", 0.88) };
   };
 
   const startCapture = () => {
@@ -205,21 +264,20 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
     setLastError("");
     onAnalysisStart();
 
-    // Continuous loop: capture → send → wait 800ms → repeat.
-    // No skipped frames — each call starts immediately after the previous response.
-    // gemini-2.0-flash free tier = 15 RPM → 1 request per 4 s minimum.
-    // We enforce a 4.5 s floor per cycle (total time = API latency + wait).
-    const MIN_CYCLE_MS = 4500;
+    // gemini-2.0-flash free tier = 15 RPM per key.
+    // With up to 3 people per frame = up to 3 calls per cycle.
+    // Floor: 6 s per cycle to stay well within rate limit.
+    const MIN_CYCLE_MS = 6000;
 
     const loop = async () => {
       while (isCapturingRef.current) {
         const cycleStart = Date.now();
         setLastError("");
         try {
-          const base64 = captureFrame();
-          if (!base64) throw new Error("Camera not ready — retrying…");
-          const people = await detectPeople(base64);
-          onFrameAnalyzed(people, base64);
+          const frame = captureFrameCanvas();
+          if (!frame) throw new Error("Camera not ready — retrying…");
+          const people = await analyzeFrame(frame.canvas, frame.base64);
+          onFrameAnalyzed(people, frame.base64);
           setFrameCount((n) => n + 1);
           setLastDetect(Date.now());
         } catch (err) {
@@ -227,7 +285,6 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
           console.error("Live detection error:", msg);
           setLastError(msg);
         }
-        // Wait out the remainder of the minimum cycle window
         const elapsed = Date.now() - cycleStart;
         await new Promise((r) => setTimeout(r, Math.max(200, MIN_CYCLE_MS - elapsed)));
       }
@@ -242,7 +299,6 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
     if (camState === "analyzing") setCamState("active");
   };
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       isCapturingRef.current = false;
@@ -252,10 +308,10 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Camera preview */}
+      {/* Camera preview with person detection overlay */}
       <div className="relative rounded-xl overflow-hidden bg-gray-900 border border-gray-800 aspect-video flex items-center justify-center">
         <video ref={videoRef} muted playsInline className="w-full h-full object-cover" />
-        <FaceOverlay videoRef={videoRef} active={camState === "active" || camState === "analyzing"} />
+        <PersonOverlay videoRef={videoRef} active={camState === "active" || camState === "analyzing"} />
 
         {camState === "idle" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
@@ -274,7 +330,6 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
           </div>
         )}
 
-        {/* Live indicator */}
         {(camState === "active" || camState === "analyzing") && (
           <div className="absolute top-3 left-3 flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/60 text-xs font-semibold text-white">
             <span className={`w-1.5 h-1.5 rounded-full ${camState === "analyzing" ? "bg-red-400 animate-pulse" : "bg-gray-400"}`} />
@@ -339,7 +394,6 @@ export default function VideoTab({ onFrameAnalyzed, onAnalysisStart }: Props) {
 
   return (
     <div>
-      {/* Mode toggle */}
       <div className="flex gap-1 p-1 bg-gray-900 rounded-xl border border-gray-800 mb-6">
         {(["upload", "live"] as const).map((m) => (
           <button
