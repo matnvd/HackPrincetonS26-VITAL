@@ -78,8 +78,10 @@ async function analyzeFrame(
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      const isQuota = msg.includes("429") || msg.toLowerCase().includes("quota") || msg.toLowerCase().includes("rate");
-      if (isQuota) onStep?.("⚠ rate limited — switch API key or wait 60 s");
+      const isZeroQuota = msg === "ZERO_QUOTA" || msg.includes("limit: 0");
+      const isRateLimit = !isZeroQuota && (msg.includes("429") || msg.toLowerCase().includes("rate"));
+      if (isZeroQuota) onStep?.("⚠ zero quota — add a Together AI key (see header)");
+      else if (isRateLimit) onStep?.("⚠ rate limited — wait or switch API key");
       console.error(`Person ${i + 1} analysis failed:`, msg);
     }
     if (i < detections.length - 1) await new Promise((r) => setTimeout(r, 300));
@@ -254,7 +256,8 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
   const captureFrameCanvas = (): { canvas: HTMLCanvasElement; base64: string } | null => {
     const video = videoRef.current;
     if (!video || video.readyState < 2) return null;
-    const scale = Math.min(1, 640 / video.videoWidth);
+    // 1280px gives better distant-person detection without excessive Gemini token cost
+    const scale = Math.min(1, 1280 / video.videoWidth);
     const canvas = document.createElement("canvas");
     canvas.width  = Math.round(video.videoWidth  * scale);
     canvas.height = Math.round(video.videoHeight * scale);
@@ -401,16 +404,21 @@ function LiveMode({ onFrameAnalyzed, onAnalysisStart }: Props) {
             <span className="text-green-600">{successCount} successful</span>
             <span className="ml-auto text-gray-700">results → Dashboard tab</span>
           </div>
-          {/* Rate limit / zero-quota warning */}
+          {/* Zero-quota warning */}
+          {cycleStatus.includes("zero quota") && (
+            <div className="px-3 py-2 rounded-lg bg-orange-500/10 border border-orange-500/30 text-orange-300 text-xs flex flex-col gap-1.5">
+              <span className="font-semibold">Gemini quota is 0 — your account or region may not have free access.</span>
+              <span className="font-semibold text-orange-200">Fastest fix: add a Together AI key</span>
+              <span>1. Go to <span className="font-mono bg-black/30 px-1 rounded">api.together.ai</span> → sign up (free, no credit card)</span>
+              <span>2. Create an API key</span>
+              <span>3. Paste it into the <span className="font-semibold">Together AI</span> slot in the 🔑 header button</span>
+              <span className="text-orange-600">Analysis will automatically use Together AI when Gemini fails.</span>
+            </div>
+          )}
+          {/* Rate limit warning */}
           {cycleStatus.includes("rate limited") && (
-            <div className="px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs flex flex-col gap-1.5">
-              <span className="font-semibold text-yellow-300">⚠ API key has no quota (limit: 0)</span>
-              <span>Keys from Google Cloud Console have zero free quota by default.</span>
-              <span className="font-semibold">Get a working key:</span>
-              <span>1. Open <span className="font-mono bg-black/30 px-1 rounded">aistudio.google.com</span> in a browser</span>
-              <span>2. Sign in → click <span className="font-mono bg-black/30 px-1 rounded">Get API key</span> → <span className="font-mono bg-black/30 px-1 rounded">Create API key in new project</span></span>
-              <span>3. Paste it using the 🔑 button in the top-right header</span>
-              <span className="text-yellow-600 italic">Each Google account gives a separate free key. Use different accounts to rotate.</span>
+            <div className="px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-xs">
+              <span className="font-semibold">Rate limited.</span> Wait ~60s or use the 🔑 button to switch API key.
             </div>
           )}
         </div>

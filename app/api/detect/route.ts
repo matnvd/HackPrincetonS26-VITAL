@@ -44,22 +44,40 @@ function isZeroQuota(msg: string) {
   return msg.includes("limit: 0") || (msg.includes("429") && msg.includes("limit: 0"));
 }
 
+// Try multiple Gemini models in order — some may have limit:0 while others work
+const GEMINI_MODELS = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"];
+
 async function callGemini(imageData: string, apiKey?: string): Promise<string> {
   const client = apiKey ? new GoogleGenerativeAI(apiKey) : genAI;
-  const model = client.getGenerativeModel({
-    model: "gemini-2.0-flash",
-    systemInstruction: TRIAGE_PROMPT,
-    generationConfig: {
-      responseMimeType: "application/json",
-      responseSchema: GEMINI_SCHEMA,
-      temperature: 0.1,
-    },
-  });
-  const result = await model.generateContent([
-    "Analyze this person's triage status.",
-    { inlineData: { mimeType: "image/jpeg", data: imageData } },
-  ]);
-  return result.response.text();
+  let lastErr: unknown;
+
+  for (const modelName of GEMINI_MODELS) {
+    try {
+      const model = client.getGenerativeModel({
+        model: modelName,
+        systemInstruction: TRIAGE_PROMPT,
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: GEMINI_SCHEMA,
+          temperature: 0.1,
+        },
+      });
+      const result = await model.generateContent([
+        "Analyze this person's triage status.",
+        { inlineData: { mimeType: "image/jpeg", data: imageData } },
+      ]);
+      return result.response.text();
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      // limit:0 means this model has no quota — try the next one
+      if (msg.includes("limit: 0")) continue;
+      // Any other error: stop trying Gemini
+      throw err;
+    }
+  }
+
+  throw lastErr;
 }
 
 // ─── Together AI (fallback) ───────────────────────────────────────────────────

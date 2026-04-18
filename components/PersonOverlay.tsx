@@ -78,7 +78,7 @@ export default function PersonOverlay({ videoRef, active }: Props) {
             delegate: "GPU",
           },
           runningMode: "VIDEO",
-          minDetectionConfidence: 0.4,
+          minDetectionConfidence: 0.25,
           minSuppressionThreshold: 0.3,
         });
         if (!cancelled) { detectorRef.current = detector; setStatus("ready"); }

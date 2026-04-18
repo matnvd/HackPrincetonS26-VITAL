@@ -23,7 +23,7 @@ async function getDetector() {
             "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/1/efficientdet_lite0.tflite",
         },
         runningMode: "IMAGE" as const,
-        scoreThreshold: 0.2,
+        scoreThreshold: 0.15,
         categoryAllowlist: ["person"],
         maxResults: 3,
       };
