@@ -36,37 +36,38 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(245,158,11,0.12),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(239,68,68,0.14),_transparent_30%),linear-gradient(180deg,_#09111d_0%,_#050913_100%)] text-white">
       <header className="border-b border-white/10 bg-slate-950/70 backdrop-blur-xl">
-        <div className="mx-auto flex w-full max-w-7xl flex-col gap-5 px-6 py-6 lg:flex-row lg:items-end lg:justify-between">
+        <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-6 py-4">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
           <div className="max-w-2xl">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.32em] text-amber-300/80">
+            <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.28em] text-amber-300/80">
               Watchful AI Incident Triage
             </p>
-            <h1 className="text-3xl font-semibold tracking-tight text-white">
+            <h1 className="text-2xl font-semibold tracking-tight text-white">
               W<span className="text-red-400">.</span>A<span className="text-red-400">.</span>I<span className="text-red-400">.</span>T<span className="text-red-400">.</span>
             </h1>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300">
+            <p className="mt-2 max-w-xl text-sm leading-5 text-slate-300">
               Turn video into per-person triage insights that highlight who needs attention first, what is happening,
               and why the operator should respond.
             </p>
           </div>
 
-          <div className="flex flex-col items-start gap-4 lg:items-end">
-            <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-red-200/75">Urgent</p>
-                <p className="mt-2 text-2xl font-semibold text-red-300">{urgentCount}</p>
+          <div className="flex flex-col gap-3 xl:items-end">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-3 py-2">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-red-200/75">Urgent</p>
+                <p className="mt-1 text-lg font-semibold text-red-300">{urgentCount}</p>
               </div>
-              <div className="rounded-2xl border border-amber-400/20 bg-amber-400/10 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-amber-100/75">Watch</p>
-                <p className="mt-2 text-2xl font-semibold text-amber-200">{watchCount}</p>
+              <div className="rounded-xl border border-amber-400/20 bg-amber-400/10 px-3 py-2">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-amber-100/75">Watch</p>
+                <p className="mt-1 text-lg font-semibold text-amber-200">{watchCount}</p>
               </div>
-              <div className="rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-emerald-100/75">Active</p>
-                <p className="mt-2 text-2xl font-semibold text-emerald-200">{activeCount}</p>
+              <div className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2">
+                <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-emerald-100/75">Active</p>
+                <p className="mt-1 text-lg font-semibold text-emerald-200">{activeCount}</p>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-2">
               <div className="flex rounded-full border border-white/10 bg-white/5 p-1">
                 {([
                   { key: "demo", label: "Preview / Demo" },
@@ -75,7 +76,7 @@ export default function App() {
                   <button
                     key={key}
                     onClick={() => setDataMode(key)}
-                    className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors cursor-pointer ${
                       dataMode === key
                         ? "bg-red-500/20 text-white"
                         : "text-slate-400 hover:text-slate-200"
@@ -86,17 +87,18 @@ export default function App() {
                 ))}
               </div>
               {patients.length > 0 && (
-                <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-slate-300">
+                <div className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[11px] text-slate-300">
                   {treatedCount} treated
                 </div>
               )}
               <ApiKeySettings />
             </div>
           </div>
+          </div>
         </div>
       </header>
 
-      <nav className="mx-auto flex w-full max-w-7xl gap-3 px-6 pt-6">
+      <nav className="mx-auto flex w-full max-w-7xl flex-wrap gap-2 px-6 pt-4">
         {([
           { key: "dashboard", label: "Dashboard", detail: "Urgency-ranked patient cards", badge: activeCount > 0 ? activeCount : null },
           { key: "video", label: "Sources", detail: "Live feed and uploaded footage", badge: null },
@@ -104,18 +106,18 @@ export default function App() {
           <button
             key={key}
             onClick={() => setTab(key)}
-            className={`flex items-center gap-4 rounded-2xl border px-5 py-4 text-left transition-all cursor-pointer ${
+            className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-all cursor-pointer ${
               tab === key
                 ? "border-red-400/40 bg-red-500/10 shadow-[0_0_0_1px_rgba(248,113,113,0.15)]"
                 : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/[0.07]"
             }`}
           >
             <div>
-              <p className={`text-sm font-semibold ${tab === key ? "text-white" : "text-slate-200"}`}>{label}</p>
-              <p className="text-xs text-slate-400">{detail}</p>
+              <p className={`text-xs font-semibold ${tab === key ? "text-white" : "text-slate-200"}`}>{label}</p>
+              <p className="text-[10px] text-slate-400">{detail}</p>
             </div>
             {badge !== null && (
-              <span className="flex h-7 min-w-7 items-center justify-center rounded-full bg-red-500 px-2 text-xs font-bold text-white">
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">
                 {badge}
               </span>
             )}

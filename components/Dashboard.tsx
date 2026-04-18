@@ -86,70 +86,103 @@ function ElapsedTimer({ since }: { since: number }) {
   return <span>{elapsed}</span>;
 }
 
+function Chevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="m19 9-7 7-7-7" />
+    </svg>
+  );
+}
+
 function PatientCard({ patient, onConfirm }: { patient: Patient; onConfirm: (key: string) => void }) {
   const cfg = RISK_CONFIG[patient.risk];
   const accentColor = PERSON_COLORS[patient.id] ?? "#ffffff";
   const personNum = patient.id.replace("person_", "");
   const topFeature = patient.features[0];
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <div
-      className={`overflow-hidden rounded-2xl border transition-all ${patient.confirmed ? "opacity-50" : ""} ${cfg.border} bg-slate-950/80 shadow-[0_12px_30px_rgba(2,6,23,0.32)]`}
+      className={`overflow-hidden rounded-2xl border transition-all ${patient.confirmed ? "opacity-50" : ""} ${cfg.border} bg-slate-950/80 shadow-[0_10px_24px_rgba(2,6,23,0.28)]`}
     >
-      <div className="flex h-full min-h-[224px] flex-col lg:flex-row">
-        <div className="relative lg:w-[36%]">
-          <div className="absolute inset-0 z-10 bg-gradient-to-tr from-slate-950/80 via-transparent to-transparent" />
+      <div className="flex min-h-[148px] gap-3 p-3">
+        <div className="relative w-28 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-slate-900">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={patient.thumbnail} alt="" className="h-full min-h-[148px] w-full object-cover" />
-
+          <img src={patient.thumbnail} alt="" className="h-full min-h-[132px] w-full object-cover" />
           <div
-            className="absolute left-3 top-3 z-20 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.22em] backdrop-blur-sm"
+            className="absolute left-2 top-2 rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.18em] backdrop-blur-sm"
             style={{ color: accentColor, borderColor: `${accentColor}66`, backgroundColor: `${accentColor}22` }}
           >
-            Patient {personNum}
+            P{personNum}
           </div>
-
-          <div className={`absolute right-3 top-3 z-20 flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.2em] backdrop-blur-sm ${cfg.bg} ${cfg.border} ${cfg.color}`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
-            {cfg.label}
-          </div>
-
-          <div className="absolute bottom-3 left-3 right-3 z-20 rounded-xl border border-white/10 bg-black/45 px-3 py-2 backdrop-blur-md">
-            <p className="text-[9px] font-semibold uppercase tracking-[0.22em] text-slate-300">Visible Priority</p>
-            <p className="mt-1 line-clamp-2 text-xs font-medium text-white">{topFeature ?? "No visible symptom detail"}</p>
-          </div>
-
-          {patient.confirmed && (
-            <div className="absolute inset-0 z-20 flex items-center justify-center bg-slate-950/55">
-              <span className="rounded-full border border-green-400/30 bg-green-500/15 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-green-200">
-                Receiving care
-              </span>
-            </div>
-          )}
         </div>
 
-        <div className="flex flex-1 flex-col p-4">
-          <div className="mb-3 flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Current Status</p>
-              <h3 className="mt-1.5 line-clamp-3 text-sm font-semibold leading-5 text-white">{patient.description}</h3>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.18em] ${cfg.bg} ${cfg.border} ${cfg.color}`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+                {cfg.label}
+              </div>
+              <p className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-white">{patient.description}</p>
             </div>
-            <div className="rounded-xl border border-white/10 bg-white/5 px-2.5 py-2 text-right">
-              <p className="text-[9px] font-semibold uppercase tracking-[0.2em] text-slate-500">Seen</p>
-              <p className="mt-1 text-xs font-mono text-slate-200">
+
+            <button
+              onClick={() => setExpanded((value) => !value)}
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-medium text-slate-300 transition-colors hover:border-white/20 hover:bg-white/10 cursor-pointer"
+              aria-expanded={expanded}
+              aria-label={expanded ? "Collapse patient details" : "Expand patient details"}
+            >
+              Details
+              <Chevron open={expanded} />
+            </button>
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-2 text-[10px] text-slate-300 xl:grid-cols-3">
+            <div className="rounded-xl border border-white/8 bg-white/[0.03] px-2.5 py-2">
+              <p className="uppercase tracking-[0.16em] text-slate-500">Most Urgent</p>
+              <p className="mt-1 line-clamp-2 text-xs font-medium text-white">{topFeature ?? "None noted"}</p>
+            </div>
+            <div className="rounded-xl border border-white/8 bg-white/[0.03] px-2.5 py-2">
+              <p className="uppercase tracking-[0.16em] text-slate-500">Waiting</p>
+              <p className="mt-1 text-xs font-mono text-white">
                 <ElapsedTimer since={patient.firstSeen} />
               </p>
             </div>
+            <div className="rounded-xl border border-white/8 bg-white/[0.03] px-2.5 py-2 col-span-2 xl:col-span-1">
+              <p className="uppercase tracking-[0.16em] text-slate-500">Symptoms</p>
+              <p className="mt-1 line-clamp-2 text-xs text-white">{patient.features.slice(0, 2).join(" · ") || "None noted"}</p>
+            </div>
           </div>
 
-          <div className="mb-3 rounded-xl border border-white/8 bg-white/[0.03] p-3">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Why This Needs Attention</p>
-            <p className="mt-1.5 line-clamp-3 text-xs leading-5 text-slate-300">{patient.reason}</p>
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              onClick={() => onConfirm(patient.key)}
+              className={`rounded-xl border px-3 py-2 text-[11px] font-medium transition-all cursor-pointer ${patient.confirmed ? "border-green-500/40 bg-green-500/10 text-green-300" : "border-white/10 bg-white/5 text-slate-200 hover:border-white/20 hover:bg-white/10"}`}
+            >
+              {patient.confirmed ? "Receiving care" : "Mark as receiving care"}
+            </button>
+            <p className="text-[10px] text-slate-500">Tap details for the full explanation.</p>
+          </div>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="border-t border-white/10 bg-white/[0.03] px-3 py-3">
+          <div className="rounded-xl border border-white/8 bg-slate-950/55 p-3">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Why This Needs Attention</p>
+            <p className="mt-1.5 text-xs leading-5 text-slate-300">{patient.reason}</p>
           </div>
 
-          <div className="flex flex-col gap-2">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-slate-400">Observed Symptoms</p>
-            {patient.features.slice(0, 3).map((feature, index) => {
+          <div className="mt-3 flex flex-col gap-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-400">Observed Symptoms</p>
+            {patient.features.map((feature, index) => {
               const isCritical = index === 0 && featureSeverity(feature) >= 3;
               return (
                 <span
@@ -160,26 +193,9 @@ function PatientCard({ patient, onConfirm }: { patient: Patient; onConfirm: (key
                 </span>
               );
             })}
-            {patient.features.length > 3 && (
-              <span className="px-1 text-[11px] text-slate-500">
-                +{patient.features.length - 3} more visible indicators
-              </span>
-            )}
-          </div>
-
-          <div className="mt-auto flex items-center gap-3 pt-4">
-            <button
-              onClick={() => onConfirm(patient.key)}
-              className={`rounded-xl border px-3 py-2 text-xs font-medium transition-all cursor-pointer ${patient.confirmed ? "border-green-500/40 bg-green-500/10 text-green-300" : "border-white/10 bg-white/5 text-slate-200 hover:border-white/20 hover:bg-white/10"}`}
-            >
-              {patient.confirmed ? "Receiving care" : "Mark as receiving care"}
-            </button>
-            <div className="text-[11px] text-slate-500">
-              Snapshot updates each time this person is re-detected.
-            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -202,25 +218,24 @@ export default function Dashboard({ patients, onConfirm, mode }: Props) {
   if (!usingPreview && patients.length === 0) {
     return (
       <div className="w-full">
-        <div className="mb-6 grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">Triage Dashboard</p>
-            <h2 className="mt-2 text-2xl font-semibold text-white">Real mode is ready for live detections.</h2>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
-              Switch to the Sources tab and run an uploaded clip or live feed. As soon as detections arrive, patient cards
-              will populate here in urgency order.
+        <div className="mb-5 grid gap-3 lg:grid-cols-[1.5fr_1fr]">
+          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">Triage Dashboard</p>
+            <h2 className="mt-2 text-xl font-semibold text-white">Real mode is ready for live detections.</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
+              Switch to the Sources tab and run an uploaded clip or live feed. As soon as detections arrive, patient cards will populate here in urgency order.
             </p>
           </div>
 
-          <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-5">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">Current State</p>
-            <div className="mt-4 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-sm leading-6 text-slate-300">
+          <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">Current State</p>
+            <div className="mt-3 rounded-xl border border-white/10 bg-white/[0.03] p-3 text-sm leading-6 text-slate-300">
               No live patients detected yet. Use <span className="font-semibold text-white">Preview / Demo</span> to show the simulated dashboard, or stay in <span className="font-semibold text-white">Real Mode</span> for actual results only.
             </div>
           </div>
         </div>
 
-        <div className="rounded-3xl border border-dashed border-white/10 bg-slate-950/40 px-6 py-16 text-center">
+        <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/40 px-6 py-14 text-center">
           <p className="text-lg font-semibold text-white">Waiting for real incident data</p>
           <p className="mt-2 text-sm text-slate-400">No sample cards are shown in Real Mode.</p>
         </div>
@@ -230,21 +245,18 @@ export default function Dashboard({ patients, onConfirm, mode }: Props) {
 
   return (
     <div className="w-full">
-      <div className="mb-6 grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-        <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">Triage Dashboard</p>
-          <h2 className="mt-2 text-2xl font-semibold text-white">
-            Urgent patients surface first, with their snapshot and symptom summary side by side.
-          </h2>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300">
-            Each card represents one detected person. The left side holds their most recent crop from the video feed,
-            and the right side summarizes visible symptoms, explanation, and triage urgency.
+      <div className="mb-5 grid gap-3 lg:grid-cols-[1.5fr_1fr]">
+        <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">Triage Dashboard</p>
+          <h2 className="mt-2 text-xl font-semibold text-white">Compact triage cards show only the most important information first.</h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
+            Each card starts collapsed with status, most urgent symptom, waiting time, and the patient image. Use the details control to expand the full explanation.
           </p>
         </div>
 
-        <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">Queue Summary</p>
-          <div className="mt-4 flex items-center gap-3 text-sm text-slate-300">
+        <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">Queue Summary</p>
+          <div className="mt-3 flex items-center gap-3 text-sm text-slate-300">
             <span className="h-2.5 w-2.5 rounded-full bg-red-400" />
             <span>{criticalCount} urgent case{criticalCount !== 1 ? "s" : ""}</span>
           </div>
@@ -257,15 +269,15 @@ export default function Dashboard({ patients, onConfirm, mode }: Props) {
             <span>{stableCount} stable</span>
           </div>
           {usingPreview && (
-            <p className="mt-4 rounded-2xl border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs leading-5 text-amber-100">
-              Preview / Demo mode is showing sample patients so the dashboard is presentation-ready before the first upload or live run.
+            <p className="mt-3 rounded-xl border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-xs leading-5 text-amber-100">
+              Preview / Demo mode is showing sample patients so the dashboard stays easy to demo.
             </p>
           )}
         </div>
       </div>
 
       {criticalCount > 0 && (
-        <div className="alert-flash mb-5 flex items-center gap-3 rounded-3xl border border-red-300/80 bg-red-500/25 px-4 py-4 shadow-[0_0_40px_rgba(248,113,113,0.35)]">
+        <div className="alert-flash mb-4 flex items-center gap-3 rounded-2xl border border-red-300/80 bg-red-500/25 px-4 py-3 shadow-[0_0_40px_rgba(248,113,113,0.35)]">
           <svg className="h-5 w-5 shrink-0 text-red-100" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
           </svg>
@@ -275,18 +287,18 @@ export default function Dashboard({ patients, onConfirm, mode }: Props) {
         </div>
       )}
 
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="grid gap-3 xl:grid-cols-3">
         {active.map((patient) => (
           <PatientCard key={patient.key} patient={patient} onConfirm={onConfirm} />
         ))}
       </div>
 
       {confirmed.length > 0 && (
-        <div className="mt-8">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.28em] text-slate-500">
+        <div className="mt-7">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">
             Receiving Treatment ({confirmed.length})
           </p>
-          <div className="grid gap-4 xl:grid-cols-3">
+          <div className="grid gap-3 xl:grid-cols-3">
             {confirmed.map((patient) => (
               <PatientCard key={patient.key} patient={patient} onConfirm={onConfirm} />
             ))}
