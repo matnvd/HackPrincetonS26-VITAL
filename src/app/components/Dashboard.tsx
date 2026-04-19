@@ -119,7 +119,8 @@ export default function Dashboard({ patients, onDismiss }: DashboardProps) {
   return (
     <div>
       {criticalCount > 0 && (
-        <div className="mb-5 px-5 py-3.5 rounded-xl flex items-center gap-3" style={{ background: "#3d0c0c", border: "1px solid #7f1d1d" }}>
+        <div className="mb-5 px-5 py-3.5 rounded-xl flex items-center gap-3" style={{ background: "#3d0c0c", border: "1px solid #7f1d1d", animation: "alert-pulse 1.6s ease-in-out infinite" }}>
+          <style>{`@keyframes alert-pulse { 0%,100%{opacity:1;border-color:#7f1d1d} 50%{opacity:0.6;border-color:#ef4444} }`}</style>
           <svg width="18" height="18" viewBox="0 0 18 18" fill="none" className="flex-shrink-0">
             <path d="M9 2.5L16 15H2L9 2.5Z" stroke="#fca5a5" strokeWidth="1.5" fill="none" strokeLinejoin="round"/>
             <path d="M9 7.5v3.5" stroke="#fca5a5" strokeWidth="1.5" strokeLinecap="round"/>
@@ -142,7 +143,7 @@ export default function Dashboard({ patients, onDismiss }: DashboardProps) {
           <span className="text-xs">Go to Sources and start a camera or video simulation.</span>
         </div>
       ) : (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="flex flex-col gap-3">
           {patients.map((p, i) => (
             <PatientCard key={`${p.cameraLabel}:${p.id}`} patient={p} index={i} onDismiss={onDismiss} />
           ))}

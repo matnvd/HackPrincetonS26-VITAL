@@ -1,49 +1,31 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { Patient, TriageLevel } from "@/app/types";
+import type { Patient } from "@/app/types";
+import Dashboard from "./Dashboard";
 
 const SAMPLE_INTERVAL_MS = 4000; // increase during demo
 const TRIAGE_ORDER: Record<string, number> = { CRITICAL: 0, URGENT: 1, STABLE: 2, MONITORING: 3 };
 
-interface TriageCfg {
-  bg: string;
-  text: string;
-  border: string;
-  dot: string;
-  label: string;
+function wordSimilarity(a: string, b: string): number {
+  const wa = new Set(a.toLowerCase().split(/\s+/));
+  const wb = new Set(b.toLowerCase().split(/\s+/));
+  const intersection = [...wa].filter((w) => wb.has(w)).length;
+  return intersection / Math.max(wa.size, wb.size, 1);
 }
 
-const TRIAGE_CONFIG: Record<TriageLevel, TriageCfg> = {
-  CRITICAL: {
-    bg: "var(--color-background-danger)",
-    text: "var(--color-text-danger)",
-    border: "var(--color-border-danger)",
-    dot: "#E24B4A",
-    label: "Immediate threat to life",
-  },
-  URGENT: {
-    bg: "var(--color-background-warning)",
-    text: "var(--color-text-warning)",
-    border: "var(--color-border-warning)",
-    dot: "#BA7517",
-    label: "Needs care soon",
-  },
-  STABLE: {
-    bg: "var(--color-background-success)",
-    text: "var(--color-text-success)",
-    border: "var(--color-border-success)",
-    dot: "#3B6D11",
-    label: "No immediate intervention",
-  },
-  MONITORING: {
-    bg: "var(--color-background-info)",
-    text: "var(--color-text-info)",
-    border: "var(--color-border-info)",
-    dot: "#185FA5",
-    label: "Observe and reassess",
-  },
-};
+// find an existing patient whose descriptor is ≥45% word-overlap with the incoming one
+function findSimilarKey(map: Record<string, Patient>, incoming: string, camLabel: string): string | null {
+  let bestKey: string | null = null;
+  let bestScore = 0.45;
+  for (const [key, existing] of Object.entries(map)) {
+    if (existing.cameraLabel !== camLabel) continue;
+    const score = wordSimilarity(incoming, existing.id);
+    if (score > bestScore) { bestScore = score; bestKey = key; }
+  }
+  return bestKey;
+}
+
 
 
 interface Event {
@@ -77,7 +59,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
   const [events, setEvents] = useState<Event[]>([]);
 
   useEffect(() => { onPatientsChange?.(patients); }, [patients, onPatientsChange]);
-  const [stats, setStats] = useState<{ analyzed: number; skipped: number; lastAt: string | null }>({ analyzed: 0, skipped: 0, lastAt: null });
 
   // simulate mode — video files from public/video_samples/
   const [videoFiles, setVideoFiles] = useState<string[]>([]);
@@ -161,7 +142,9 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
         setPatients((prev) => {
           const map: Record<string, Patient> = Object.fromEntries(prev.map((p) => [`${p.cameraLabel}:${p.id}`, p]));
           for (const p of parsed.patients as Patient[]) {
-            const key = `${cameraLabel}:${p.id}`;
+            const exactKey = `${cameraLabel}:${p.id}`;
+            // prefer exact match, fall back to fuzzy match to avoid duplicates
+            const key = map[exactKey] ? exactKey : (findSimilarKey(map, p.id, cameraLabel) ?? exactKey);
             map[key] = { ...p, cameraLabel, firstSeen: map[key]?.firstSeen || now, lastSeen: now };
           }
           return Object.values(map).sort(
@@ -177,7 +160,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
         addEvent(`[${cameraLabel}] No patients detected in frame`, "muted");
       }
 
-      setStats((s) => ({ analyzed: s.analyzed + 1, skipped: s.skipped, lastAt: now }));
     } catch (err) {
       addEvent(`[${cameraLabel}] Analysis error: ` + (err instanceof Error ? err.message : String(err)), "error");
     } finally {
@@ -254,8 +236,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
         if (hasMotion(device.deviceId, frame)) {
           const label = activeCamerasRef.current[device.deviceId]?.label ?? device.label;
           analyzeFrame(device.deviceId, label, frame);
-        } else {
-          setStats((s) => ({ ...s, skipped: s.skipped + 1 }));
         }
       }, SAMPLE_INTERVAL_MS);
 
@@ -286,12 +266,15 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     });
   }, []);
 
-  const criticalCount = patients.filter((p) => p.triage === "CRITICAL").length;
-  const urgentCount = patients.filter((p) => p.triage === "URGENT").length;
+  const [dismissed, setDismissed] = useState<Set<string>>(new Set());
+  const handleDismiss = useCallback((key: string) => {
+    setDismissed((prev) => new Set([...prev, key]));
+  }, []);
+  const visible = patients.filter((p) => !dismissed.has(`${p.cameraLabel}:${p.id}`));
 
   // html
   return (
-    <div style={{ fontFamily: "var(--font-sans)", minHeight: "100vh", background: "var(--color-background-tertiary)" }}>
+    <div style={{ fontFamily: "var(--font-sans)", minHeight: "100vh", background: "#09090f", color: "white" }}>
       <style>{`
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
         .live-dot { animation: blink 1.2s ease infinite; }
@@ -299,22 +282,8 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
         .spin { animation: spin 1s linear infinite; }
       `}</style>
 
-      <header style={{ background: "var(--color-background-primary)", borderBottom: "0.5px solid var(--color-border-tertiary)", padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-          <div style={{ width: 28, height: 28, borderRadius: "var(--border-radius-md)", background: "var(--color-background-danger)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1v12M1 7h12" stroke="var(--color-text-danger)" strokeWidth="2" strokeLinecap="round"/></svg>
-          </div>
-          <span style={{ fontWeight: 500, fontSize: 15, color: "var(--color-text-primary)" }}>Hospital triage AI</span>
-        </div>
-        <div style={{ display: "flex", gap: "20px", fontSize: 12, color: "var(--color-text-secondary)" }}>
-          <span>Analyzed: <strong style={{ color: "var(--color-text-primary)" }}>{stats.analyzed}</strong></span>
-          <span>Skipped (no motion): <strong style={{ color: "var(--color-text-primary)" }}>{stats.skipped}</strong></span>
-          {stats.lastAt && <span>Last scan: <strong style={{ color: "var(--color-text-primary)" }}>{stats.lastAt}</strong></span>}
-        </div>
-      </header>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: "0", minHeight: "calc(100vh - 53px)" }}>
-        <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 440px", minHeight: "100vh" }}>
+        <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "16px", borderRight: "1px solid rgba(255,255,255,0.08)" }}>
 
           {/* Camera selector — shows all detected devices, click to start/stop each */}
           <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", padding: "14px" }}>
@@ -399,103 +368,25 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
             </div>
           </div>
 
-          {patients.length > 0 && (
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
-              <button onClick={() => setPatients([])} style={{ padding: "6px 14px", borderRadius: "var(--border-radius-md)", border: "0.5px solid var(--color-border-secondary)", cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12, background: "transparent", color: "var(--color-text-secondary)" }}>
-                Clear patients
-              </button>
-            </div>
-          )}
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "10px" }}>
-            {[
-              { label: "Critical", count: criticalCount, cfg: TRIAGE_CONFIG.CRITICAL },
-              { label: "Urgent", count: urgentCount, cfg: TRIAGE_CONFIG.URGENT },
-              { label: "Total patients", count: patients.length, cfg: null },
-            ].map(({ label, count, cfg }) => (
-              <div key={label} style={{ background: cfg ? cfg.bg : "var(--color-background-secondary)", border: `0.5px solid ${cfg ? cfg.border : "var(--color-border-tertiary)"}`, borderRadius: "var(--border-radius-md)", padding: "12px 16px" }}>
-                <div style={{ fontSize: 12, color: cfg ? cfg.text : "var(--color-text-secondary)", marginBottom: 4 }}>{label}</div>
-                <div style={{ fontSize: 24, fontWeight: 500, color: cfg ? cfg.text : "var(--color-text-primary)" }}>{count}</div>
-              </div>
-            ))}
-          </div>
-
-          <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", padding: "16px", flex: 1 }}>
-            <div style={{ fontSize: 12, color: "var(--color-text-secondary)", marginBottom: "10px", fontWeight: 500 }}>Event log</div>
+          {/* Event log */}
+          <div style={{ background: "#0f1015", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: "14px", flex: 1 }}>
+            <div style={{ fontSize: 12, color: "#475569", marginBottom: 10, fontWeight: 500 }}>Event log</div>
             {events.length === 0 ? (
-              <div style={{ fontSize: 13, color: "var(--color-text-tertiary)" }}>No events yet.</div>
+              <div style={{ fontSize: 13, color: "#1e293b" }}>No events yet.</div>
             ) : (
               events.map((e, i) => (
-                <div key={i} style={{ display: "flex", gap: "12px", marginBottom: "6px", fontSize: 12, borderBottom: i < events.length - 1 ? "0.5px solid var(--color-border-tertiary)" : "none", paddingBottom: "6px" }}>
-                  <span style={{ color: "var(--color-text-tertiary)", whiteSpace: "nowrap", fontFamily: "var(--font-mono)" }}>{e.time}</span>
-                  <span style={{ color: e.level === "critical" ? "var(--color-text-danger)" : e.level === "error" ? "var(--color-text-danger)" : e.level === "muted" ? "var(--color-text-tertiary)" : "var(--color-text-secondary)" }}>{e.msg}</span>
+                <div key={i} style={{ display: "flex", gap: 12, marginBottom: 6, fontSize: 12, borderBottom: i < events.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none", paddingBottom: 6 }}>
+                  <span style={{ color: "#1e293b", whiteSpace: "nowrap", fontFamily: "monospace" }}>{e.time}</span>
+                  <span style={{ color: e.level === "critical" ? "#fca5a5" : e.level === "error" ? "#f87171" : e.level === "muted" ? "#1e293b" : "#475569" }}>{e.msg}</span>
                 </div>
               ))
             )}
           </div>
         </div>
 
-        <div style={{ borderLeft: "0.5px solid var(--color-border-tertiary)", background: "var(--color-background-primary)", padding: "20px", overflowY: "auto" }}>
-          <div style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: "16px" }}>
-            Patient triage board
-          </div>
-
-          {patients.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "40px 0", color: "var(--color-text-tertiary)", fontSize: 13, lineHeight: 1.7 }}>
-              No patients detected yet.<br />Start the camera to begin triage.
-            </div>
-          ) : (
-            patients.map((p) => {
-              const cfg = TRIAGE_CONFIG[p.triage] || TRIAGE_CONFIG.MONITORING;
-              return (
-                <div key={`${p.cameraLabel}:${p.id}`} style={{ background: "var(--color-background-secondary)", border: `0.5px solid ${cfg.border}`, borderRadius: "var(--border-radius-lg)", padding: "14px", marginBottom: "10px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                    <span style={{ fontWeight: 500, fontSize: 14, color: "var(--color-text-primary)" }}>{p.id}</span>
-                    <div style={{ display: "flex", alignItems: "center", gap: "6px", background: cfg.bg, padding: "3px 10px", borderRadius: "var(--border-radius-md)" }}>
-                      <div style={{ width: 6, height: 6, borderRadius: "50%", background: cfg.dot }} />
-                      <span style={{ fontSize: 11, fontWeight: 500, color: cfg.text }}>{p.triage}</span>
-                    </div>
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--color-text-secondary)", lineHeight: 1.8 }}>
-                    <div style={{ display: "flex", gap: "8px" }}>
-                      <span style={{ color: "var(--color-text-tertiary)" }}>Location</span>
-                      <span>{p.location}</span>
-                    </div>
-                    <div style={{ display: "flex", gap: "8px" }}>
-                      <span style={{ color: "var(--color-text-tertiary)" }}>Posture</span>
-                      <span>{p.posture} · {p.movement}</span>
-                    </div>
-                    <div style={{ display: "flex", gap: "8px" }}>
-                      <span style={{ color: "var(--color-text-tertiary)" }}>Note</span>
-                      <span>{p.reason}</span>
-                    </div>
-                  </div>
-                  <div style={{ marginTop: "8px", display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--color-text-tertiary)" }}>
-                    <span>First seen: {p.firstSeen}</span>
-                    <span>Conf: {Math.round((p.confidence || 0) * 100)}%</span>
-                  </div>
-                </div>
-              );
-            })
-          )}
-
-          <div style={{ marginTop: "24px", borderTop: "0.5px solid var(--color-border-tertiary)", paddingTop: "16px" }}>
-            <div style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: "10px" }}>Triage scale</div>
-            {Object.entries(TRIAGE_CONFIG).map(([level, cfg]) => (
-              <div key={level} style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "8px", fontSize: 12 }}>
-                <div style={{ width: 8, height: 8, borderRadius: "50%", background: cfg.dot, flexShrink: 0 }} />
-                <span style={{ color: "var(--color-text-primary)", fontWeight: 500, minWidth: 80 }}>{level.charAt(0) + level.slice(1).toLowerCase()}</span>
-                <span style={{ color: "var(--color-text-tertiary)" }}>{cfg.label}</span>
-              </div>
-            ))}
-          </div>
-
-          <div style={{ marginTop: "16px", borderTop: "0.5px solid var(--color-border-tertiary)", paddingTop: "16px" }}>
-            <div style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: "8px" }}>Token efficiency</div>
-            <div style={{ fontSize: 12, color: "var(--color-text-tertiary)", lineHeight: 1.7 }}>
-              Frames sampled every 4s. Motion detection skips static frames. Images compressed to 65% JPEG at 480×270px. JSON-only responses minimize output tokens.
-            </div>
-          </div>
+        {/* Right panel — pretty patient cards */}
+        <div style={{ padding: "20px", overflowY: "auto", background: "#07070e" }}>
+          <Dashboard patients={visible} onDismiss={handleDismiss} />
         </div>
       </div>
     </div>
