@@ -261,6 +261,14 @@ export default function UploadsView() {
     [refresh, selectedId],
   );
 
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const filtered = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return uploads;
+    return uploads.filter((u) => u.filename.toLowerCase().includes(q));
+  }, [uploads, searchQuery]);
+
   const [seeding, setSeeding] = useState(false);
   const handleLoadSample = useCallback(async () => {
     if (seeding) return;
@@ -396,6 +404,26 @@ export default function UploadsView() {
           </button>
         </div>
 
+        <div className="relative">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search filenames…"
+            className="w-full rounded-md border border-white/10 bg-[#0c0c12] px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600 focus:border-white/25 focus:outline-none"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded px-1 text-xs text-slate-500 hover:text-slate-300"
+              aria-label="Clear search"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+
         <div className="-mr-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-2">
           {loading ? (
             <div className="text-xs text-slate-500">Loading…</div>
@@ -407,8 +435,12 @@ export default function UploadsView() {
             <div className="rounded-md border border-white/10 bg-[#0c0c12] px-3 py-6 text-center text-xs text-slate-500">
               No uploads yet.
             </div>
+          ) : filtered.length === 0 ? (
+            <div className="rounded-md border border-white/10 bg-[#0c0c12] px-3 py-6 text-center text-xs text-slate-500">
+              No uploads match &ldquo;{searchQuery}&rdquo;.
+            </div>
           ) : (
-            uploads.map((u) => {
+            filtered.map((u) => {
               const active = selectedId === u.id;
               return (
                 <button
