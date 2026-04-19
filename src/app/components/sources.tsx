@@ -1,11 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import type { Patient, TriageLevel } from "@/app/types";
 
 const SAMPLE_INTERVAL_MS = 4000; // increase during demo
 const TRIAGE_ORDER: Record<string, number> = { CRITICAL: 0, URGENT: 1, STABLE: 2, MONITORING: 3 };
-
-type TriageLevel = "CRITICAL" | "URGENT" | "STABLE" | "MONITORING";
 
 interface TriageCfg {
   bg: string;
@@ -46,19 +45,6 @@ const TRIAGE_CONFIG: Record<TriageLevel, TriageCfg> = {
   },
 };
 
-interface Patient {
-  id: string;
-  location: string;
-  posture: string;
-  movement: string;
-  visible_distress: boolean;
-  triage: TriageLevel;
-  reason: string;
-  confidence: number;
-  firstSeen: string;
-  lastSeen: string;
-  cameraLabel: string;
-}
 
 interface Event {
   time: string;
@@ -77,7 +63,9 @@ interface ActiveCamera {
   intervalId: ReturnType<typeof setInterval> | null;
 }
 
-export default function HospitalTriageAI() {
+interface Props { onPatientsChange?: (patients: Patient[]) => void; }
+
+export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
   // per-camera video/canvas elements stored by deviceId
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
   const canvasRefs = useRef<Record<string, HTMLCanvasElement | null>>({});
@@ -87,6 +75,8 @@ export default function HospitalTriageAI() {
   const [activeCameras, setActiveCameras] = useState<Record<string, ActiveCamera>>({});
   const [patients, setPatients] = useState<Patient[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
+
+  useEffect(() => { onPatientsChange?.(patients); }, [patients, onPatientsChange]);
   const [stats, setStats] = useState<{ analyzed: number; skipped: number; lastAt: string | null }>({ analyzed: 0, skipped: 0, lastAt: null });
 
   // simulate mode — video files from public/video_samples/
@@ -97,6 +87,7 @@ export default function HospitalTriageAI() {
   const simVideoRef = useRef<HTMLVideoElement | null>(null);
   const simCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const simAnalyzingRef = useRef(false); // guard against concurrent sim API calls
+  const simEndedHandlerRef = useRef<(() => void) | null>(null);
 
   // keep ref in sync so interval callbacks always see latest state
   useEffect(() => { activeCamerasRef.current = activeCameras; }, [activeCameras]);
@@ -203,6 +194,10 @@ export default function HospitalTriageAI() {
     if (simIntervalRef.current) clearInterval(simIntervalRef.current);
     const video = simVideoRef.current;
     if (!video) return;
+
+    // remove any prior ended listener
+    if (simEndedHandlerRef.current) video.removeEventListener("ended", simEndedHandlerRef.current);
+
     video.src = `/video_samples/${filename}`;
     video.currentTime = 0;
     video.play();
@@ -222,11 +217,27 @@ export default function HospitalTriageAI() {
       const frameData = canvas.toDataURL("image/jpeg", 0.65);
       analyzeFrame("sim", filename, frameData);
     }, SAMPLE_INTERVAL_MS);
+
+    // when the video finishes its first pass: stop analysis, keep looping visually
+    const handleEnded = () => {
+      if (simIntervalRef.current) { clearInterval(simIntervalRef.current); simIntervalRef.current = null; }
+      video.currentTime = 0;
+      video.play();
+      addEvent(`[${filename}] Playback looping — analysis complete`, "muted");
+    };
+    simEndedHandlerRef.current = handleEnded;
+    video.addEventListener("ended", handleEnded);
   }, [addEvent, analyzeFrame]);
 
   const stopSimulation = useCallback(() => {
     if (simIntervalRef.current) clearInterval(simIntervalRef.current);
-    if (simVideoRef.current) { simVideoRef.current.pause(); simVideoRef.current.src = ""; }
+    const video = simVideoRef.current;
+    if (video) {
+      if (simEndedHandlerRef.current) video.removeEventListener("ended", simEndedHandlerRef.current);
+      video.pause();
+      video.src = "";
+    }
+    simEndedHandlerRef.current = null;
     setSimulating(null);
     addEvent("Simulation stopped", "muted");
   }, [addEvent]);
@@ -364,7 +375,7 @@ export default function HospitalTriageAI() {
 
             {/* Simulation tile — always in DOM so ref is available; hidden via CSS when inactive */}
             <div style={{ display: simulating ? "block" : (Object.values(activeCameras).length === 0 ? "block" : "none"), background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
-              <video ref={simVideoRef} style={{ width: "100%", height: "100%", objectFit: "cover", display: simulating ? "block" : "none" }} muted playsInline loop />
+              <video ref={simVideoRef} style={{ width: "100%", height: "100%", objectFit: "cover", display: simulating ? "block" : "none" }} muted playsInline />
               <canvas ref={simCanvasRef} style={{ display: "none" }} />
               {simulating ? (
                 <>
