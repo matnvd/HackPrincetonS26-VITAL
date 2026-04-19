@@ -64,7 +64,7 @@ export default function LibraryView() {
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-[#09090f] text-slate-200 md:flex-row">
+    <div className="flex min-h-0 flex-1 flex-col bg-[#09090f] text-[15px] text-slate-200 md:flex-row">
       <section className="flex w-full min-w-0 flex-col gap-3 border-b border-white/10 p-6 md:w-2/5 md:shrink-0 md:border-b-0 md:border-r">
         <div className="flex items-baseline justify-between gap-4">
           <div>

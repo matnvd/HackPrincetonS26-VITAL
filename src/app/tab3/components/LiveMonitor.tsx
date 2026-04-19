@@ -241,7 +241,7 @@ export default function LiveMonitor() {
   }, [sortedEvents, severityFilter]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-[#09090f] text-slate-200 lg:flex-row">
+    <div className="flex min-h-0 flex-1 flex-col bg-[#09090f] text-[15px] text-slate-200 lg:flex-row">
       <section className="flex w-full min-w-0 flex-col gap-4 border-b border-white/10 p-6 lg:basis-[55%] lg:shrink-0 lg:border-b-0 lg:border-r">
         <div className="flex items-start justify-between gap-3">
           <div>

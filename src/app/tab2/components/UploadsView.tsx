@@ -290,7 +290,7 @@ export default function UploadsView() {
   const pendingList = Object.values(pending).sort((a, b) => a.tempId.localeCompare(b.tempId));
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-[#09090f] text-slate-200 lg:flex-row">
+    <div className="flex min-h-0 flex-1 flex-col bg-[#09090f] text-[15px] text-slate-200 lg:flex-row">
       <section className="flex w-full flex-col gap-4 border-b border-white/10 p-6 lg:w-[420px] lg:shrink-0 lg:border-b-0 lg:border-r">
         <div>
           <h1 className="text-lg font-semibold text-white">Uploads</h1>
