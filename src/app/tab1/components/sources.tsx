@@ -138,8 +138,8 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
   const overlayRefs = useRef<Record<string, HTMLCanvasElement | null>>({});
   const activeCamerasRef = useRef<Record<string, ActiveCamera>>({});
 
-  // YOLOv8 worker refs — inference runs off-thread, main loop is purely sync draw + send
-  const workerRef      = useRef<Worker | null>(null);
+  // YOLOv8 worker refs — one worker per active source for true parallel inference
+  const workersRef     = useRef<Record<string, Worker>>({});
   const lastPosesRef   = useRef<Record<string, WorkerPose[]>>({});   // keyed by deviceId or filename
   const pendingRef     = useRef<Record<string, boolean>>({});
   const lastInfTimeRef = useRef<Record<string, number>>({});
@@ -301,12 +301,9 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
   useEffect(() => { addEventRef.current = addEvent; }, [addEvent]);
   useEffect(() => { captureFromVideoRef.current = captureFromVideo; }, [captureFromVideo]);
 
-  // load YOLOv8n-pose ONNX model in a Web Worker — keeps inference off the React main thread
-  useEffect(() => {
-    const worker = new Worker(new URL("../workers/yolo.worker.ts", import.meta.url));
-    workerRef.current = worker;
-    worker.postMessage({ type: "load" });
-
+  // Attach the shared onmessage handler to a freshly spawned worker.
+  // Uses stable refs only — safe to call outside React render.
+  const attachWorkerHandler = useCallback((worker: Worker) => {
     worker.onmessage = (e: MessageEvent) => {
       const { type, id, poses, error } = e.data as {
         type: string; id?: string; poses?: WorkerPose[]; error?: string;
@@ -372,8 +369,25 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
         }
       }
     };
+  }, []);
 
-    return () => { worker.terminate(); workerRef.current = null; };
+  const spawnWorkerForId = useCallback((id: string) => {
+    if (workersRef.current[id]) return;
+    const worker = new Worker(new URL("../workers/yolo.worker.ts", import.meta.url));
+    attachWorkerHandler(worker);
+    worker.postMessage({ type: "load" });
+    workersRef.current[id] = worker;
+  }, [attachWorkerHandler]);
+
+  const terminateWorkerForId = useCallback((id: string) => {
+    workersRef.current[id]?.terminate();
+    delete workersRef.current[id];
+  }, []);
+
+  // terminate all workers on unmount
+  useEffect(() => {
+    const workers = workersRef.current;
+    return () => { Object.values(workers).forEach(w => w.terminate()); };
   }, []);
 
   // enumerate available cameras on mount
@@ -399,11 +413,12 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     delete lastPosesRef.current[deviceId];
     delete pendingRef.current[deviceId];
     delete lastInfTimeRef.current[deviceId];
-  }, []);
+    terminateWorkerForId(deviceId);
+  }, [terminateWorkerForId]);
 
-  // rAF loop per camera — synchronous: draws cached poses, sends frame to worker at throttled rate
+  // rAF loop per camera — each camera has its own worker for parallel inference
   const startPoseLoop = useCallback((deviceId: string) => {
-    if (!workerRef.current) return;
+    spawnWorkerForId(deviceId);
     poseStateRef.current[deviceId] = { lastPosture: null, lyingStartMs: null, lastTriggerMs: 0 };
     lastPosesRef.current[deviceId] = [];
     pendingRef.current[deviceId] = false;
@@ -432,18 +447,18 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
       }
 
       const now = Date.now();
-      if (!pendingRef.current[deviceId] && now - (lastInfTimeRef.current[deviceId] ?? 0) >= POSE_INTERVAL_MS && workerRef.current) {
+      if (!pendingRef.current[deviceId] && now - (lastInfTimeRef.current[deviceId] ?? 0) >= POSE_INTERVAL_MS && workersRef.current[deviceId]) {
         pendingRef.current[deviceId] = true;
         lastInfTimeRef.current[deviceId] = now;
         createImageBitmap(video).then((bitmap) => {
-          workerRef.current?.postMessage({ type: "infer", id: deviceId, bitmap }, [bitmap]);
+          workersRef.current[deviceId]?.postMessage({ type: "infer", id: deviceId, bitmap }, [bitmap]);
         });
       }
 
       rafIdRef.current[deviceId] = requestAnimationFrame(loop);
     };
     rafIdRef.current[deviceId] = requestAnimationFrame(loop);
-  }, []);
+  }, [spawnWorkerForId]);
 
   const stopSimPoseLoop = useCallback((filename: string) => {
     const id = simRafIds.current[filename];
@@ -452,9 +467,11 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     delete lastPosesRef.current[filename];
     delete pendingRef.current[filename];
     delete lastInfTimeRef.current[filename];
-  }, []);
+    terminateWorkerForId(filename);
+  }, [terminateWorkerForId]);
 
   const startSimPoseLoop = useCallback((filename: string) => {
+    spawnWorkerForId(filename);
     simPoseStates.current[filename] = { lastPosture: null, lyingStartMs: null, lastTriggerMs: 0 };
     lastPosesRef.current[filename] = [];
     pendingRef.current[filename] = false;
@@ -483,23 +500,22 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
         }
       }
 
-      if (!pendingRef.current[filename] && Date.now() - (lastInfTimeRef.current[filename] ?? 0) >= POSE_INTERVAL_MS && workerRef.current) {
+      if (!pendingRef.current[filename] && Date.now() - (lastInfTimeRef.current[filename] ?? 0) >= POSE_INTERVAL_MS && workersRef.current[filename]) {
         pendingRef.current[filename] = true;
         lastInfTimeRef.current[filename] = Date.now();
         createImageBitmap(video).then((bitmap) => {
-          workerRef.current?.postMessage({ type: "infer", id: filename, bitmap }, [bitmap]);
+          workersRef.current[filename]?.postMessage({ type: "infer", id: filename, bitmap }, [bitmap]);
         });
       }
 
       simRafIds.current[filename] = requestAnimationFrame(loop);
     };
     simRafIds.current[filename] = requestAnimationFrame(loop);
-  }, []);
+  }, [spawnWorkerForId]);
 
-  // start/stop pose loops as cameras become active or inactive
+  // start/stop pose loops as cameras become active or inactive — each spawns its own worker
   const prevCameraIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!yoloReady) return;
     const current = new Set(Object.keys(activeCameras));
     for (const id of current) {
       if (!prevCameraIdsRef.current.has(id)) startPoseLoop(id);
@@ -508,7 +524,7 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
       if (!current.has(id)) stopPoseLoop(id);
     }
     prevCameraIdsRef.current = current;
-  }, [activeCameras, yoloReady, startPoseLoop, stopPoseLoop]);
+  }, [activeCameras, startPoseLoop, stopPoseLoop]);
 
   const startSimulation = useCallback((filename: string) => {
     const video = simVideoRefs.current[filename];
@@ -529,7 +545,7 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
 
     const script = SIM_SCRIPTS[filename];
     startSimPoseLoop(filename);
-    if (script) workerRef.current?.postMessage({ type: "force-yolo" });
+    if (script) workersRef.current[filename]?.postMessage({ type: "force-yolo" });
 
     if (script) {
       const timers = script.map((entry) =>
