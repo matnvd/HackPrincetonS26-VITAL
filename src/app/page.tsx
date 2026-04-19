@@ -1,5 +1,5 @@
-import HospitalTriageAI from "./components/sources";
+import { redirect } from "next/navigation";
 
 export default function Home() {
-  return <HospitalTriageAI />;
+  redirect("/tab1");
 }

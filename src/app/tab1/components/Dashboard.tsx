@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import type { Patient, TriageLevel } from "@/app/types";
+import type { Patient, TriageLevel } from "@/app/tab1/types";
 
 const DISPLAY: Record<TriageLevel, { label: string; borderColor: string; cardBg: string; pillBg: string; pillText: string; pillBorder: string; badgeBg: string; badgeText: string; dot: string; thumbBg: string }> = {
   CRITICAL:   { label: "URGENT",      borderColor: "#ef4444", cardBg: "#0e0708", pillBg: "#2a0a0a", pillText: "#fca5a5", pillBorder: "#7f1d1d", badgeBg: "#7f1d1d", badgeText: "#fca5a5", dot: "#ef4444", thumbBg: "#180508" },
@@ -63,7 +63,6 @@ function PatientCard({ patient, index, onDismiss }: { patient: Patient; index: n
       <Thumbnail triage={patient.triage} index={index} />
 
       <div className="flex-1 min-w-0 flex flex-col">
-        {/* Badge row */}
         <div className="flex items-center gap-1.5 mb-2 flex-wrap">
           <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: cfg.thumbBg, color: cfg.dot, border: `1px solid ${cfg.dot}35` }}>
             P{index + 1}
@@ -77,10 +76,8 @@ function PatientCard({ patient, index, onDismiss }: { patient: Patient; index: n
           </button>
         </div>
 
-        {/* Description — use reason as main text */}
         <p className="text-[13px] text-white font-medium leading-snug mb-2.5 line-clamp-2">{patient.reason}</p>
 
-        {/* Feature pills */}
         <div className="flex flex-wrap gap-1.5 mb-auto">
           {pills.map((f) => (
             <span key={f} className="text-[11px] px-2.5 py-0.5 rounded-full" style={{ background: cfg.pillBg, color: cfg.pillText, border: `1px solid ${cfg.pillBorder}` }}>
@@ -89,7 +86,6 @@ function PatientCard({ patient, index, onDismiss }: { patient: Patient; index: n
           ))}
         </div>
 
-        {/* Expanded details */}
         {expanded && (
           <div className="mt-2.5 mb-2.5 text-xs text-slate-500 space-y-1 border-t border-white/5 pt-2.5">
             <div className="flex justify-between"><span>Location</span><span className="text-slate-400">{patient.location}</span></div>
@@ -99,7 +95,6 @@ function PatientCard({ patient, index, onDismiss }: { patient: Patient; index: n
           </div>
         )}
 
-        {/* Bottom row */}
         <div className="flex items-end justify-between mt-3">
           <button onClick={() => onDismiss(key)} className="text-[11px] text-slate-400 hover:text-white border border-slate-700 hover:border-slate-500 px-3 py-1.5 rounded-lg transition-colors cursor-pointer">
             Mark as receiving care
