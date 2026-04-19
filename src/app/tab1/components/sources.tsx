@@ -138,15 +138,25 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
   const activeCamerasRef = useRef<Record<string, ActiveCamera>>({});
 
   // YOLOv8 worker refs — inference runs off-thread, main loop is purely sync draw + send
-  const workerRef       = useRef<Worker | null>(null);
-  const lastPosesRef    = useRef<Record<string, WorkerPose[]>>({});   // keyed by deviceId or "sim"
-  const pendingRef      = useRef<Record<string, boolean>>({});         // true while worker is busy
-  const lastInfTimeRef  = useRef<Record<string, number>>({});          // last send timestamp
-  const poseStateRef    = useRef<Record<string, PoseState>>({});
-  const rafIdRef        = useRef<Record<string, number>>({});
-  const simOverlayRef   = useRef<HTMLCanvasElement | null>(null);
-  const simPoseStateRef = useRef<PoseState>({ lastPosture: null, lyingStartMs: null, lastTriggerMs: 0 });
-  const simRafIdRef     = useRef<number | null>(null);
+  const workerRef      = useRef<Worker | null>(null);
+  const lastPosesRef   = useRef<Record<string, WorkerPose[]>>({});   // keyed by deviceId or filename
+  const pendingRef     = useRef<Record<string, boolean>>({});
+  const lastInfTimeRef = useRef<Record<string, number>>({});
+  const poseStateRef   = useRef<Record<string, PoseState>>({});
+  const rafIdRef       = useRef<Record<string, number>>({});
+
+  // per-simulation refs — keyed by filename (multiple sims can run concurrently)
+  const simVideoRefs     = useRef<Record<string, HTMLVideoElement | null>>({});
+  const simCanvasRefs    = useRef<Record<string, HTMLCanvasElement | null>>({});
+  const simOverlayRefs   = useRef<Record<string, HTMLCanvasElement | null>>({});
+  const simPoseStates    = useRef<Record<string, PoseState>>({});
+  const simRafIds        = useRef<Record<string, number>>({});
+  const simIntervals     = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const simAnalyzingRefs = useRef<Record<string, boolean>>({});
+  const simDoneRefs      = useRef<Record<string, boolean>>({});
+  const simEndedHandlers = useRef<Record<string, () => void>>({});
+  // tracks which IDs in pose refs belong to sims vs cameras
+  const simFilenamesRef  = useRef<Set<string>>(new Set());
 
   const [yoloReady, setYoloReady] = useState(false);
   const [poseMode, setPoseMode] = useState<"mediapipe" | "yolo">("mediapipe");
@@ -154,24 +164,12 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
   const [activeCameras, setActiveCameras] = useState<Record<string, ActiveCamera>>({});
   const [patients, setPatients] = useState<Patient[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
+  const [simulatingFiles, setSimulatingFiles] = useState<string[]>([]);
+  const [simAnalyzing, setSimAnalyzing] = useState<Record<string, boolean>>({});
+  const [videoFiles, setVideoFiles] = useState<string[]>([]);
 
   useEffect(() => { onPatientsChange?.(patients); }, [patients, onPatientsChange]);
-
-  // simulate mode — video files from public/video_samples/
-  const [videoFiles, setVideoFiles] = useState<string[]>([]);
-  const [simulating, setSimulating] = useState<string | null>(null); // filename currently simulating
-  const [simAnalyzing, setSimAnalyzing] = useState(false); // shows the analyzing indicator on the sim tile
-  const simVideoRef        = useRef<HTMLVideoElement | null>(null);
-  const simCanvasRef       = useRef<HTMLCanvasElement | null>(null);
-  const simIntervalRef     = useRef<ReturnType<typeof setInterval> | null>(null);
-  const simAnalyzingRef    = useRef(false); // guard against concurrent sim API calls
-  const simAnalysisDoneRef = useRef(false); // set after first pass so pose loop keeps drawing but stops triggering
-  const simEndedHandlerRef = useRef<(() => void) | null>(null);
-  const simulatingRef      = useRef<string | null>(null);
-
-  // keep ref in sync so interval callbacks always see latest state
   useEffect(() => { activeCamerasRef.current = activeCameras; }, [activeCameras]);
-  useEffect(() => { simulatingRef.current = simulating; }, [simulating]);
 
   const addEvent = useCallback((msg: string, level = "info") => {
     const time = new Date().toLocaleTimeString("en-US", { hour12: false });
@@ -204,21 +202,21 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     if (video.readyState < 2) return null;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
-    canvas.width = 400; // increase if doing longer distance demo
-    canvas.height = 225; // increase if doing longer distance demo
+    canvas.width = 480; // increase if doing longer distance demo (1.77 : 1)
+    canvas.height = 270; // increase if doing longer distance demo
     ctx.drawImage(video, 0, 0, 320, 180);
     return canvas.toDataURL("image/jpeg", 0.65);
   }, []);
 
   // IMPORTANT: if anomaly detected by YOLOv8, send to api route.ts and analyze returned json
   const analyzeFrame = useCallback(async (deviceId: string, cameraLabel: string, frameData: string) => {
-    // capture person crops synchronously now, before the async API round-trip
-    const video = deviceId === "sim" ? simVideoRef.current : videoRefs.current[deviceId];
+    const isSim = simFilenamesRef.current.has(deviceId);
+    const video = isSim ? simVideoRefs.current[deviceId] : videoRefs.current[deviceId];
     const crops = video ? computePersonCrops(video, lastPosesRef.current[deviceId] ?? []) : [];
 
-    if (deviceId === "sim") {
-      setSimAnalyzing(true);
-      simAnalyzingRef.current = true;
+    if (isSim) {
+      simAnalyzingRefs.current[deviceId] = true;
+      setSimAnalyzing(prev => ({ ...prev, [deviceId]: true }));
     } else {
       setActiveCameras((s) => s[deviceId] ? { ...s, [deviceId]: { ...s[deviceId], analyzing: true } } : s);
     }
@@ -267,9 +265,9 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     } catch (err) {
       addEvent(`[${cameraLabel}] Analysis error: ` + (err instanceof Error ? err.message : String(err)), "error");
     } finally {
-      if (deviceId === "sim") {
-        setSimAnalyzing(false);
-        simAnalyzingRef.current = false;
+      if (isSim) {
+        simAnalyzingRefs.current[deviceId] = false;
+        setSimAnalyzing(prev => ({ ...prev, [deviceId]: false }));
       } else {
         setActiveCameras((s) => s[deviceId] ? { ...s, [deviceId]: { ...s[deviceId], analyzing: false } } : s);
       }
@@ -303,8 +301,8 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
         pendingRef.current[id] = false;
         lastPosesRef.current[id] = poses ?? [];
 
-        // anomaly detection — same logic as before, now runs on main thread after worker responds
-        const state = id === "sim" ? simPoseStateRef.current : poseStateRef.current[id];
+        const isSim = simFilenamesRef.current.has(id);
+        const state = isSim ? simPoseStates.current[id] : poseStateRef.current[id];
         if (!state) return;
 
         const now = Date.now();
@@ -317,22 +315,21 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
           if (posture !== "lying") state.lyingStartMs = null;
           const sustainedLying = posture === "lying" && state.lyingStartMs !== null && now - state.lyingStartMs > LYING_CONFIRM_MS;
 
-          if (id === "sim") {
-            // skip if previous analysis still running, or first pass already completed
+          if (isSim) {
             if (
               (fell || sustainedLying) &&
               now - state.lastTriggerMs > TRIGGER_COOLDOWN_MS &&
-              !simAnalyzingRef.current &&
-              !simAnalysisDoneRef.current
+              !simAnalyzingRefs.current[id] &&
+              !simDoneRefs.current[id]
             ) {
               state.lastTriggerMs = now;
-              const video = simVideoRef.current;
-              const canvas = simCanvasRef.current;
+              const video = simVideoRefs.current[id];
+              const canvas = simCanvasRefs.current[id];
               if (video && canvas) {
                 const frameData = captureFromVideoRef.current(video, canvas);
                 if (frameData) {
-                  addEventRef.current(`[${simulatingRef.current ?? "sim"}] Anomaly detected — triggering Claude`, "info");
-                  analyzeFrameRef.current("sim", simulatingRef.current ?? "sim", frameData);
+                  addEventRef.current(`[${id}] Anomaly detected — triggering Claude`, "info");
+                  analyzeFrameRef.current(id, id, frameData);
                 }
               }
             }
@@ -409,19 +406,16 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
       const ctx = overlay.getContext("2d");
       if (ctx) ctx.clearRect(0, 0, w, h);
 
-      // draw last known skeleton every frame for smooth overlay
       if (ctx && w > 0 && h > 0) {
         for (const pose of (lastPosesRef.current[deviceId] ?? [])) {
           drawSkeleton(ctx, pose.keypoints, w, h, pose.posture);
         }
       }
 
-      // kick off inference at throttled rate — non-blocking (worker handles it)
       const now = Date.now();
       if (!pendingRef.current[deviceId] && now - (lastInfTimeRef.current[deviceId] ?? 0) >= POSE_INTERVAL_MS && workerRef.current) {
         pendingRef.current[deviceId] = true;
         lastInfTimeRef.current[deviceId] = now;
-        // ImageBitmap is GPU-accelerated and transferable (zero-copy) to the worker
         createImageBitmap(video).then((bitmap) => {
           workerRef.current?.postMessage({ type: "infer", id: deviceId, bitmap }, [bitmap]);
         });
@@ -432,27 +426,29 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     rafIdRef.current[deviceId] = requestAnimationFrame(loop);
   }, []);
 
-  const stopSimPoseLoop = useCallback(() => {
-    if (simRafIdRef.current) cancelAnimationFrame(simRafIdRef.current);
-    simRafIdRef.current = null;
-    lastPosesRef.current["sim"] = [];
-    pendingRef.current["sim"] = false;
+  const stopSimPoseLoop = useCallback((filename: string) => {
+    const id = simRafIds.current[filename];
+    if (id) cancelAnimationFrame(id);
+    delete simRafIds.current[filename];
+    delete lastPosesRef.current[filename];
+    delete pendingRef.current[filename];
+    delete lastInfTimeRef.current[filename];
   }, []);
 
   const startSimPoseLoop = useCallback((filename: string) => {
     if (!workerRef.current) return;
-    simPoseStateRef.current = { lastPosture: null, lyingStartMs: null, lastTriggerMs: 0 };
-    lastPosesRef.current["sim"] = [];
-    pendingRef.current["sim"] = false;
-    lastInfTimeRef.current["sim"] = 0;
+    simPoseStates.current[filename] = { lastPosture: null, lyingStartMs: null, lastTriggerMs: 0 };
+    lastPosesRef.current[filename] = [];
+    pendingRef.current[filename] = false;
+    lastInfTimeRef.current[filename] = 0;
 
     const loop = () => {
-      if (!simulatingRef.current) return; // sim was stopped
-      const video   = simVideoRef.current;
-      const overlay = simOverlayRef.current;
+      if (!simFilenamesRef.current.has(filename)) return; // sim was stopped
+      const video   = simVideoRefs.current[filename];
+      const overlay = simOverlayRefs.current[filename];
 
       if (!video || !overlay || video.readyState < 2 || video.ended) {
-        simRafIdRef.current = requestAnimationFrame(loop);
+        simRafIds.current[filename] = requestAnimationFrame(loop);
         return;
       }
 
@@ -463,29 +459,24 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
       const ctx = overlay.getContext("2d");
       if (ctx) ctx.clearRect(0, 0, w, h);
 
-      // draw last known skeleton every frame for smooth overlay
       if (ctx && w > 0 && h > 0) {
-        for (const pose of (lastPosesRef.current["sim"] ?? [])) {
+        for (const pose of (lastPosesRef.current[filename] ?? [])) {
           drawSkeleton(ctx, pose.keypoints, w, h, pose.posture);
         }
       }
 
-      // kick off inference at throttled rate — non-blocking (worker handles it)
       const now = Date.now();
-      if (!pendingRef.current["sim"] && now - (lastInfTimeRef.current["sim"] ?? 0) >= POSE_INTERVAL_MS && workerRef.current) {
-        pendingRef.current["sim"] = true;
-        lastInfTimeRef.current["sim"] = now;
-        // ImageBitmap is GPU-accelerated and transferable (zero-copy) to the worker
+      if (!pendingRef.current[filename] && now - (lastInfTimeRef.current[filename] ?? 0) >= POSE_INTERVAL_MS && workerRef.current) {
+        pendingRef.current[filename] = true;
+        lastInfTimeRef.current[filename] = now;
         createImageBitmap(video).then((bitmap) => {
-          workerRef.current?.postMessage({ type: "infer", id: "sim", bitmap }, [bitmap]);
+          workerRef.current?.postMessage({ type: "infer", id: filename, bitmap }, [bitmap]);
         });
       }
 
-      // filename used only for event label — passed via closure, not re-evaluated
-      void filename;
-      simRafIdRef.current = requestAnimationFrame(loop);
+      simRafIds.current[filename] = requestAnimationFrame(loop);
     };
-    simRafIdRef.current = requestAnimationFrame(loop);
+    simRafIds.current[filename] = requestAnimationFrame(loop);
   }, []);
 
   // start/stop pose loops as cameras become active or inactive
@@ -503,65 +494,70 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
   }, [activeCameras, yoloReady, startPoseLoop, stopPoseLoop]);
 
   const startSimulation = useCallback((filename: string) => {
-    const video = simVideoRef.current;
+    const video = simVideoRefs.current[filename];
     if (!video) return;
 
-    // remove any prior ended listener
-    if (simEndedHandlerRef.current) video.removeEventListener("ended", simEndedHandlerRef.current);
-    stopSimPoseLoop();
-    simAnalysisDoneRef.current = false;
+    const prevHandler = simEndedHandlers.current[filename];
+    if (prevHandler) video.removeEventListener("ended", prevHandler);
+    stopSimPoseLoop(filename);
+    simDoneRefs.current[filename] = false;
+    simFilenamesRef.current.add(filename);
 
     video.src = `/video_samples/${filename}`;
     video.currentTime = 0;
     video.play();
-    setSimulating(filename);
+    setSimulatingFiles(prev => [...prev, filename]);
     addEvent(`Simulating: ${filename}`, "info");
 
-    // analyze the first frame as soon as the video is ready
     const handleCanPlay = () => {
       video.removeEventListener("canplay", handleCanPlay);
-      const canvas = simCanvasRef.current;
-      if (canvas && !simAnalyzingRef.current) {
+      const canvas = simCanvasRefs.current[filename];
+      if (canvas && !simAnalyzingRefs.current[filename]) {
         const frameData = captureFromVideo(video, canvas);
-        if (frameData) analyzeFrame("sim", filename, frameData);
+        if (frameData) analyzeFrame(filename, filename, frameData);
       }
     };
     video.addEventListener("canplay", handleCanPlay);
 
     if (workerRef.current) startSimPoseLoop(filename);
 
-    simIntervalRef.current = setInterval(() => {
-      if (simAnalyzingRef.current) return;
-      const canvas = simCanvasRef.current;
+    simIntervals.current[filename] = setInterval(() => {
+      if (simAnalyzingRefs.current[filename]) return;
+      const canvas = simCanvasRefs.current[filename];
       if (!video || !canvas || video.readyState < 2 || video.ended) return;
       const frameData = captureFromVideo(video, canvas);
-      if (frameData) analyzeFrame("sim", filename, frameData);
+      if (frameData) analyzeFrame(filename, filename, frameData);
     }, SAMPLE_INTERVAL_MS);
 
-    // when the video finishes its first pass: stop analysis, keep looping visually
     const handleEnded = () => {
-      simAnalysisDoneRef.current = true; // blocks further Claude triggers but pose overlay keeps running
-      if (simIntervalRef.current) { clearInterval(simIntervalRef.current); simIntervalRef.current = null; }
+      simDoneRefs.current[filename] = true;
+      const iv = simIntervals.current[filename];
+      if (iv) { clearInterval(iv); delete simIntervals.current[filename]; }
       video.currentTime = 0;
       video.play();
       addEvent(`[${filename}] Playback looping — analysis complete`, "muted");
     };
-    simEndedHandlerRef.current = handleEnded;
+    simEndedHandlers.current[filename] = handleEnded;
     video.addEventListener("ended", handleEnded);
   }, [addEvent, analyzeFrame, captureFromVideo, startSimPoseLoop, stopSimPoseLoop]);
 
-  const stopSimulation = useCallback(() => {
-    stopSimPoseLoop();
-    if (simIntervalRef.current) { clearInterval(simIntervalRef.current); simIntervalRef.current = null; }
-    const video = simVideoRef.current;
+  const stopSimulation = useCallback((filename: string) => {
+    stopSimPoseLoop(filename);
+    const iv = simIntervals.current[filename];
+    if (iv) { clearInterval(iv); delete simIntervals.current[filename]; }
+    const video = simVideoRefs.current[filename];
     if (video) {
-      if (simEndedHandlerRef.current) video.removeEventListener("ended", simEndedHandlerRef.current);
+      const handler = simEndedHandlers.current[filename];
+      if (handler) video.removeEventListener("ended", handler);
       video.pause();
       video.src = "";
     }
-    simEndedHandlerRef.current = null;
-    setSimulating(null);
-    addEvent("Simulation stopped", "muted");
+    delete simEndedHandlers.current[filename];
+    delete simDoneRefs.current[filename];
+    delete simAnalyzingRefs.current[filename];
+    simFilenamesRef.current.delete(filename);
+    setSimulatingFiles(prev => prev.filter(f => f !== filename));
+    addEvent(`Simulation stopped: ${filename}`, "muted");
   }, [addEvent, stopSimPoseLoop]);
 
   const startCamera = useCallback(async (device: CameraDevice) => {
@@ -578,11 +574,9 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
         if (frameData) analyzeFrame(device.deviceId, activeCamerasRef.current[device.deviceId]?.label ?? device.label, frameData);
       }, SAMPLE_INTERVAL_MS);
 
-      // pose loop starts via the activeCameras useEffect once the camera is registered
       const cam: ActiveCamera = { deviceId: device.deviceId, label: device.label, stream, analyzing: false, intervalId };
       setActiveCameras((prev) => ({ ...prev, [device.deviceId]: cam }));
 
-      // analyze the first frame as soon as the video element is ready
       const triggerFirst = () => {
         const video  = videoRefs.current[device.deviceId];
         const canvas = canvasRefs.current[device.deviceId];
@@ -592,7 +586,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
           if (frameData) analyzeFrame(device.deviceId, device.label, frameData);
         }
       };
-      // video ref is set after re-render, so defer listener attachment slightly
       setTimeout(() => {
         const video = videoRefs.current[device.deviceId];
         if (video) video.addEventListener("canplay", triggerFirst);
@@ -615,14 +608,15 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     setActiveCameras((prev) => { const next = { ...prev }; delete next[deviceId]; return next; });
   }, [addEvent, stopPoseLoop]);
 
-  // cleanup all cameras on unmount
+  // cleanup all cameras and sims on unmount
   useEffect(() => () => {
     Object.values(activeCamerasRef.current).forEach((cam) => {
       cam.stream.getTracks().forEach((t) => t.stop());
       if (cam.intervalId) clearInterval(cam.intervalId);
     });
     Object.keys(rafIdRef.current).forEach((id) => cancelAnimationFrame(rafIdRef.current[id]));
-    if (simRafIdRef.current) cancelAnimationFrame(simRafIdRef.current);
+    Object.values(simRafIds.current).forEach((id) => cancelAnimationFrame(id));
+    Object.values(simIntervals.current).forEach((iv) => clearInterval(iv));
   }, []);
 
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
@@ -630,6 +624,8 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     setDismissed((prev) => new Set([...prev, key]));
   }, []);
   const visible = patients.filter((p) => !dismissed.has(`${p.cameraLabel}:${p.id}`));
+
+  const totalTiles = Object.values(activeCameras).length + simulatingFiles.length;
 
   // html
   return (
@@ -654,7 +650,70 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
             }
           </div>
 
-          {/* Camera selector — shows all detected devices, click to start/stop each */}
+          {/* Video grid — cameras + active simulations */}
+          <div style={{ display: "grid", gridTemplateColumns: totalTiles >= 3 ? "1fr 1fr 1fr" : totalTiles === 2 ? "1fr 1fr" : "1fr", gap: "12px" }}>
+            {Object.values(activeCameras).map((cam) => (
+              <div key={cam.deviceId} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
+                <video ref={(el) => { videoRefs.current[cam.deviceId] = el; if (el && el.srcObject !== cam.stream) { el.srcObject = cam.stream; el.play(); } }} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted playsInline autoPlay />
+                <canvas ref={(el) => { canvasRefs.current[cam.deviceId] = el; }} style={{ display: "none" }} />
+                <canvas
+                  ref={(el) => { overlayRefs.current[cam.deviceId] = el; }}
+                  style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none" }}
+                />
+                <div style={{ position: "absolute", top: 8, left: 8, display: "flex", alignItems: "center", gap: "6px", background: "var(--color-background-danger)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
+                  <div className="live-dot" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--color-text-danger)" }} />
+                  <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-danger)" }}>{cam.label}</span>
+                </div>
+                {cam.analyzing && (
+                  <div style={{ position: "absolute", top: 8, right: 8, display: "flex", alignItems: "center", gap: "5px", background: "var(--color-background-info)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
+                    <svg className="spin" width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" stroke="var(--color-text-info)" strokeWidth="1.5" strokeDasharray="6 8" fill="none"/></svg>
+                    <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-info)" }}>Analyzing</span>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {/* Pre-render ALL sim video elements (hidden when inactive) so refs are always available before startSimulation runs */}
+            {videoFiles.map((filename) => {
+              const active = simulatingFiles.includes(filename);
+              return (
+                <div key={filename} style={{ display: active ? "block" : "none", background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
+                  <video ref={(el) => { simVideoRefs.current[filename] = el; }} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted playsInline />
+                  <canvas ref={(el) => { simCanvasRefs.current[filename] = el; }} style={{ display: "none" }} />
+                  <canvas
+                    ref={(el) => { simOverlayRefs.current[filename] = el; }}
+                    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none" }}
+                  />
+                  {active && (
+                    <>
+                      <div style={{ position: "absolute", top: 8, left: 8, display: "flex", alignItems: "center", gap: "6px", background: "var(--color-background-warning)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
+                        <div className="live-dot" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--color-text-warning)" }} />
+                        <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-warning)" }}>SIM · {filename}</span>
+                      </div>
+                      {simAnalyzing[filename] && (
+                        <div style={{ position: "absolute", top: 8, right: 8, display: "flex", alignItems: "center", gap: "5px", background: "var(--color-background-info)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
+                          <svg className="spin" width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" stroke="var(--color-text-info)" strokeWidth="1.5" strokeDasharray="6 8" fill="none"/></svg>
+                          <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-info)" }}>Analyzing</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Empty state */}
+            {totalTiles === 0 && (
+              <div style={{ background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
+                <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+                  <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="2" y="8" width="28" height="24" rx="3" stroke="var(--color-border-secondary)" strokeWidth="1.5"/><path d="M30 15l8-5v20l-8-5V15z" stroke="var(--color-border-secondary)" strokeWidth="1.5"/><circle cx="16" cy="20" r="5" stroke="var(--color-border-secondary)" strokeWidth="1.5"/></svg>
+                  <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>No active cameras</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Camera selector */}
           <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", padding: "14px" }}>
             <div style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: "10px" }}>Available cameras</div>
             {devices.length === 0 ? (
@@ -674,15 +733,15 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
             )}
           </div>
 
-          {/* Simulate mode — play a video file through the same analysis pipeline */}
+          {/* Simulate mode — each video file independently startable */}
           {videoFiles.length > 0 && (
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", padding: "14px" }}>
               <div style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: "10px" }}>Simulate from video file</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
                 {videoFiles.map((f) => {
-                  const active = simulating === f;
+                  const active = simulatingFiles.includes(f);
                   return (
-                    <button key={f} onClick={() => active ? stopSimulation() : startSimulation(f)}
+                    <button key={f} onClick={() => active ? stopSimulation(f) : startSimulation(f)}
                       style={{ padding: "6px 14px", borderRadius: "var(--border-radius-md)", border: active ? "0.5px solid var(--color-border-danger)" : "0.5px solid var(--color-border-secondary)", cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 500, background: active ? "var(--color-background-danger)" : "var(--color-background-secondary)", color: active ? "var(--color-text-danger)" : "var(--color-text-primary)" }}>
                       {active ? "Stop" : "▶"} · {f}
                     </button>
@@ -691,61 +750,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
               </div>
             </div>
           )}
-
-          {/* Live camera feeds grid — always rendered so simVideoRef is always mounted */}
-          <div style={{ display: "grid", gridTemplateColumns: Object.values(activeCameras).length >= 1 ? "1fr 1fr" : "1fr", gap: "12px" }}>
-            {Object.values(activeCameras).map((cam) => (
-              <div key={cam.deviceId} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
-                <video ref={(el) => { videoRefs.current[cam.deviceId] = el; if (el && el.srcObject !== cam.stream) { el.srcObject = cam.stream; el.play(); } }} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted playsInline autoPlay />
-                <canvas ref={(el) => { canvasRefs.current[cam.deviceId] = el; }} style={{ display: "none" }} />
-                {/* Pose skeleton overlay */}
-                <canvas
-                  ref={(el) => { overlayRefs.current[cam.deviceId] = el; }}
-                  style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none" }}
-                />
-                <div style={{ position: "absolute", top: 8, left: 8, display: "flex", alignItems: "center", gap: "6px", background: "var(--color-background-danger)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
-                  <div className="live-dot" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--color-text-danger)" }} />
-                  <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-danger)" }}>{cam.label}</span>
-                </div>
-                {cam.analyzing && (
-                  <div style={{ position: "absolute", top: 8, right: 8, display: "flex", alignItems: "center", gap: "5px", background: "var(--color-background-info)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
-                    <svg className="spin" width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" stroke="var(--color-text-info)" strokeWidth="1.5" strokeDasharray="6 8" fill="none"/></svg>
-                    <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-info)" }}>Analyzing</span>
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {/* Simulation tile — always in DOM so ref is available; hidden via CSS when inactive */}
-            <div style={{ display: simulating ? "block" : (Object.values(activeCameras).length === 0 ? "block" : "none"), background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
-              <video ref={simVideoRef} style={{ width: "100%", height: "100%", objectFit: "cover", display: simulating ? "block" : "none" }} muted playsInline />
-              <canvas ref={simCanvasRef} style={{ display: "none" }} />
-              {/* Sim pose skeleton overlay */}
-              <canvas
-                ref={simOverlayRef}
-                style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", pointerEvents: "none", display: simulating ? "block" : "none" }}
-              />
-              {simulating ? (
-                <>
-                  <div style={{ position: "absolute", top: 8, left: 8, display: "flex", alignItems: "center", gap: "6px", background: "var(--color-background-warning)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
-                    <div className="live-dot" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--color-text-warning)" }} />
-                    <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-warning)" }}>SIM · {simulating}</span>
-                  </div>
-                  {simAnalyzing && (
-                    <div style={{ position: "absolute", top: 8, right: 8, display: "flex", alignItems: "center", gap: "5px", background: "var(--color-background-info)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
-                      <svg className="spin" width="9" height="9" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" stroke="var(--color-text-info)" strokeWidth="1.5" strokeDasharray="6 8" fill="none"/></svg>
-                      <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-info)" }}>Analyzing</span>
-                    </div>
-                  )}
-                </>
-              ) : Object.values(activeCameras).length === 0 ? (
-                <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "8px" }}>
-                  <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><rect x="2" y="8" width="28" height="24" rx="3" stroke="var(--color-border-secondary)" strokeWidth="1.5"/><path d="M30 15l8-5v20l-8-5V15z" stroke="var(--color-border-secondary)" strokeWidth="1.5"/><circle cx="16" cy="20" r="5" stroke="var(--color-border-secondary)" strokeWidth="1.5"/></svg>
-                  <span style={{ fontSize: 13, color: "var(--color-text-secondary)" }}>No active cameras</span>
-                </div>
-              ) : null}
-            </div>
-          </div>
 
           {/* Event log */}
           <div style={{ background: "#0f1015", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: "14px", flex: 1 }}>
