@@ -9,6 +9,16 @@ export type EventType =
   | "fall"
   | "respiratory"
   | "agitation"
+  | "unresponsive"
+  | "anaphylaxis"
+  | "syncope"
+  | "vomiting"
+  | "cyanosis"
+  | "environmental"
+  | "violence"
+  | "hypoglycemia"
+  | "overdose"
+  | "pain_crisis"
   | "other"
   | "normal";
 
@@ -46,6 +56,18 @@ export interface LiveSession {
   startedAt: string;
   endedAt?: string;
   status: "active" | "ended";
+  /** Display label for the monitored patient; defaults to "Patient" when missing. */
+  patientLabel?: string;
+  /** Absolute path to saved session recording (e.g. WebM). */
+  recordingStoragePath?: string;
+  recordingMimeType?: string;
+  /** Wall-clock duration of the recording file in seconds (client-reported). */
+  recordingDurationSec?: number;
+  /**
+   * Seconds from session timeline origin (same as event.startTs) to t=0 of the video file.
+   * Seek in the video at max(0, event.startTs - recordingSessionOffsetSec).
+   */
+  recordingSessionOffsetSec?: number;
 }
 
 export const SEVERITY_COLOR: Record<Severity, string> = {

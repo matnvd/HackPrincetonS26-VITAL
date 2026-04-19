@@ -1,76 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  AnalysisEvent,
-  EventType,
-  Severity,
-} from "@/app/lib/types";
+import type { AnalysisEvent } from "@/app/lib/types";
 import { fetchWithToast } from "@/app/lib/fetchWithToast";
 import SeverityFilterChips, {
   type SeverityFilter,
 } from "@/app/components/SeverityFilterChips";
-import LiveFeed from "./LiveFeed";
+import LiveFeed, { type LiveFeedHandle } from "./LiveFeed";
 import LiveLogs from "./LiveLogs";
 import KeyEventsSummary from "./KeyEventsSummary";
 
 interface SessionInfo {
   id: string;
   startedAt: number;
+  patientLabel: string;
+  /** Set after stop when a recording was saved (see GET session). */
+  hasRecording?: boolean;
+  /** Seconds from session timeline start to video t=0; seek at event.startTs minus this. */
+  recordingSessionOffsetSec?: number;
 }
 
 const STUB_LIVE = process.env.NEXT_PUBLIC_STUB_LIVE === "true";
-
-function clientUuid(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return crypto.randomUUID();
-  }
-  return `evt-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-const STUB_EVENT_POOL: Array<{
-  patientLabel: string;
-  eventType: EventType;
-  severity: Severity;
-  summary: string;
-  symptoms: string[];
-}> = [
-  {
-    patientLabel: "elderly man blue cap",
-    eventType: "respiratory",
-    severity: "urgent",
-    summary: "Rapid shallow breathing with hand on chest.",
-    symptoms: ["tachypnea", "hand on chest"],
-  },
-  {
-    patientLabel: "young woman red coat",
-    eventType: "fall",
-    severity: "critical",
-    summary: "Slumped to the floor, not moving.",
-    symptoms: ["unresponsive", "ground level"],
-  },
-  {
-    patientLabel: "middle-aged man grey hoodie",
-    eventType: "agitation",
-    severity: "moderate",
-    summary: "Pacing and muttering, increasingly restless.",
-    symptoms: ["pacing", "muttering"],
-  },
-  {
-    patientLabel: "child green shirt",
-    eventType: "other",
-    severity: "low",
-    summary: "Quiet, sitting still next to caregiver.",
-    symptoms: ["calm"],
-  },
-  {
-    patientLabel: "older woman beige scarf",
-    eventType: "cardiac",
-    severity: "critical",
-    summary: "Clutching chest, pale, sweating.",
-    symptoms: ["chest pain", "diaphoresis", "pallor"],
-  },
-];
 
 export default function LiveMonitor() {
   const [session, setSession] = useState<SessionInfo | null>(null);
@@ -79,44 +29,60 @@ export default function LiveMonitor() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
+  const [patientLabelDraft, setPatientLabelDraft] = useState("");
+  /** Opt-in before Start; if false, no MediaRecorder / upload for this session. */
+  const [recordSession, setRecordSession] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
-  const stubIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const feedRef = useRef<LiveFeedHandle>(null);
 
   const closeStream = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
-    if (stubIntervalRef.current) {
-      clearInterval(stubIntervalRef.current);
-      stubIntervalRef.current = null;
-    }
   }, []);
 
   useEffect(() => closeStream, [closeStream]);
 
-  const startStubLoop = useCallback((sessionId: string) => {
-    if (stubIntervalRef.current) return;
-    stubIntervalRef.current = setInterval(() => {
-      const spec = STUB_EVENT_POOL[Math.floor(Math.random() * STUB_EVENT_POOL.length)];
-      const now = new Date().toISOString();
-      const event: AnalysisEvent = {
-        id: clientUuid(),
-        sessionId,
-        startTs: 0,
-        endTs: 1,
-        eventType: spec.eventType,
-        severity: spec.severity,
-        patientLabel: spec.patientLabel,
-        summary: spec.summary,
-        symptoms: spec.symptoms,
-        confidence: 0.7 + Math.random() * 0.25,
-        source: "live",
-        createdAt: now,
-      };
-      setEvents((prev) => [...prev, event]);
-    }, 4000);
-  }, []);
+  const shutdownLiveSession = useCallback(async () => {
+    await feedRef.current?.stop();
+    const id = session?.id;
+    if (id) {
+      try {
+        await fetchWithToast(
+          `/api/tab3/sessions/${id}/end`,
+          { method: "POST" },
+          { errorMessage: "Could not end session cleanly" },
+        );
+      } catch (err) {
+        console.warn("[LiveMonitor] stop request failed:", err);
+      }
+      try {
+        const r = await fetch(`/api/tab3/sessions/${id}`, { cache: "no-store" });
+        if (r.ok) {
+          const d = (await r.json()) as {
+            session?: { recordingStoragePath?: string; recordingSessionOffsetSec?: number };
+          };
+          const s = d.session;
+          if (s?.recordingStoragePath) {
+            setSession((prev) =>
+              prev && prev.id === id
+                ? {
+                    ...prev,
+                    hasRecording: true,
+                    recordingSessionOffsetSec: s.recordingSessionOffsetSec ?? 0,
+                  }
+                : prev,
+            );
+          }
+        }
+      } catch {
+        /* best-effort */
+      }
+    }
+    closeStream();
+    setActive(false);
+  }, [session, closeStream]);
 
   const handleStart = useCallback(async () => {
     if (busy || active) return;
@@ -125,14 +91,24 @@ export default function LiveMonitor() {
     try {
       const res = await fetchWithToast(
         "/api/tab3/sessions",
-        { method: "POST" },
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            patientLabel: patientLabelDraft.trim() || undefined,
+          }),
+        },
         { errorMessage: "Could not start live session" },
       );
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `Failed to start (${res.status})`);
       const id: string = body.sessionId;
+      const patientLabel =
+        typeof body.patientLabel === "string" && body.patientLabel.trim().length > 0
+          ? body.patientLabel.trim()
+          : "Patient";
       const startedAt = Date.now();
-      setSession({ id, startedAt });
+      setSession({ id, startedAt, patientLabel });
       setEvents([]);
       setActive(true);
 
@@ -148,40 +124,36 @@ export default function LiveMonitor() {
         /* hydration is best-effort */
       }
 
-      if (STUB_LIVE) {
-        startStubLoop(id);
-      } else {
-        const es = new EventSource(`/api/tab3/sessions/${id}/stream`);
-        eventSourceRef.current = es;
-        es.onmessage = (msg) => {
-          try {
-            const parsed = JSON.parse(msg.data) as { type: string; data?: unknown };
-            if (parsed.type === "event" && parsed.data) {
-              setEvents((prev) => {
-                const evt = parsed.data as AnalysisEvent;
-                if (prev.some((e) => e.id === evt.id)) return prev;
-                return [...prev, evt];
-              });
-            } else if (parsed.type === "play_alert") {
-              const data = parsed.data as { audioPath?: string } | undefined;
-              if (data?.audioPath) {
-                const audio = new Audio(`/api/tab3/alerts/${data.audioPath}`);
-                audio.play().catch((err) =>
-                  console.error("[LiveMonitor] audio playback failed:", err),
-                );
-              }
-            } else if (parsed.type === "session_ended") {
-              closeStream();
-              setActive(false);
+      const es = new EventSource(`/api/tab3/sessions/${id}/stream`);
+      eventSourceRef.current = es;
+      es.onmessage = (msg) => {
+        try {
+          const parsed = JSON.parse(msg.data) as { type: string; data?: unknown };
+          if (parsed.type === "event" && parsed.data) {
+            setEvents((prev) => {
+              const evt = parsed.data as AnalysisEvent;
+              if (prev.some((e) => e.id === evt.id)) return prev;
+              return [...prev, evt];
+            });
+          } else if (parsed.type === "play_alert") {
+            const data = parsed.data as { audioPath?: string } | undefined;
+            if (data?.audioPath) {
+              const audio = new Audio(`/api/tab3/alerts/${data.audioPath}`);
+              audio.play().catch((err) =>
+                console.error("[LiveMonitor] audio playback failed:", err),
+              );
             }
-          } catch (err) {
-            console.warn("[LiveMonitor] bad SSE payload:", err);
+          } else if (parsed.type === "session_ended") {
+            closeStream();
+            setActive(false);
           }
-        };
-        es.onerror = () => {
-          /* browser auto-reconnects unless we close */
-        };
-      }
+        } catch (err) {
+          console.warn("[LiveMonitor] bad SSE payload:", err);
+        }
+      };
+      es.onerror = () => {
+        /* browser auto-reconnects unless we close */
+      };
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setActive(false);
@@ -189,43 +161,19 @@ export default function LiveMonitor() {
     } finally {
       setBusy(false);
     }
-  }, [busy, active, closeStream, startStubLoop]);
+  }, [busy, active, closeStream, patientLabelDraft]);
 
   const handleStop = useCallback(async () => {
     if (busy || !session) return;
     setBusy(true);
     try {
-      closeStream();
-      setActive(false);
-      try {
-        await fetchWithToast(
-          `/api/tab3/sessions/${session.id}/end`,
-          { method: "POST" },
-          { errorMessage: "Could not end session cleanly" },
-        );
-      } catch (err) {
-        console.warn("[LiveMonitor] stop request failed:", err);
-      }
+      await shutdownLiveSession();
     } finally {
       setBusy(false);
     }
-  }, [busy, session, closeStream]);
-
-  const handleFrame = useCallback(
-    (base64: string, timestamp: number) => {
-      if (!session) return;
-      if (STUB_LIVE) return;
-      fetch("/api/tab3/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: session.id, timestamp, imageBase64: base64 }),
-      }).catch((err) => console.error("[LiveMonitor] analyze failed:", err));
-    },
-    [session],
-  );
+  }, [busy, session, shutdownLiveSession]);
 
   const sortedEvents = events;
-  const sessionStart = session?.startedAt ?? Date.now();
 
   const severityCounts = useMemo(() => {
     const counts: Partial<Record<SeverityFilter, number>> = { all: sortedEvents.length };
@@ -248,17 +196,42 @@ export default function LiveMonitor() {
             <h1 className="text-lg font-semibold text-white">Live Monitor</h1>
             <p className="mt-1 text-xs text-slate-400">
               {STUB_LIVE
-                ? "Stub mode: random events fabricated client-side every 4s. No webcam frames sent."
-                : "Webcam frames captured every 2.5s and sent to the model. Events stream over SSE."}
+                ? "Stub mode: random observations POST to /api/tab3/ingest every 4s (no Overshoot, no camera). Events stream over SSE."
+                : "Overshoot RealtimeVision in the browser (clip mode, default clip sampling). Results POST to /api/tab3/ingest; events stream over SSE."}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {!active && (
+              <>
+                <label className="flex min-w-[140px] max-w-[220px] flex-1 items-center gap-2">
+                  <span className="sr-only">Patient label</span>
+                  <input
+                    type="text"
+                    value={patientLabelDraft}
+                    onChange={(e) => setPatientLabelDraft(e.target.value)}
+                    placeholder="Patient label"
+                    disabled={busy}
+                    className="w-full rounded-md border border-white/15 bg-[#0c0c12] px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:border-emerald-500/40 focus:outline-none disabled:opacity-50"
+                  />
+                </label>
+                <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-slate-400">
+                  <input
+                    type="checkbox"
+                    checked={recordSession}
+                    onChange={(e) => setRecordSession(e.target.checked)}
+                    disabled={busy}
+                    className="h-3.5 w-3.5 rounded border-white/25 bg-[#0c0c12] text-emerald-500 focus:ring-emerald-500/40 disabled:opacity-50"
+                  />
+                  Record session video
+                </label>
+              </>
+            )}
             {active ? (
               <button
                 type="button"
                 onClick={handleStop}
                 disabled={busy}
-                className="rounded-md border border-red-500/40 bg-red-500/15 px-4 py-1.5 text-sm font-medium text-red-200 transition-colors hover:bg-red-500/25 disabled:opacity-50"
+                className="shrink-0 rounded-md border border-red-500/40 bg-red-500/15 px-4 py-1.5 text-sm font-medium text-red-200 transition-colors hover:bg-red-500/25 disabled:opacity-50"
               >
                 Stop
               </button>
@@ -267,7 +240,7 @@ export default function LiveMonitor() {
                 type="button"
                 onClick={handleStart}
                 disabled={busy}
-                className="rounded-md border border-emerald-500/40 bg-emerald-500/15 px-4 py-1.5 text-sm font-medium text-emerald-200 transition-colors hover:bg-emerald-500/25 disabled:opacity-50"
+                className="shrink-0 rounded-md border border-emerald-500/40 bg-emerald-500/15 px-4 py-1.5 text-sm font-medium text-emerald-200 transition-colors hover:bg-emerald-500/25 disabled:opacity-50"
               >
                 Start
               </button>
@@ -276,10 +249,14 @@ export default function LiveMonitor() {
         </div>
 
         <LiveFeed
+          ref={feedRef}
           sessionId={session?.id ?? null}
           active={active}
-          sessionStart={sessionStart}
-          onFrame={handleFrame}
+          enableRecording={recordSession}
+          onError={(err) => {
+            setError(err.message);
+            void shutdownLiveSession();
+          }}
         />
 
         {error && (
@@ -289,13 +266,42 @@ export default function LiveMonitor() {
         )}
 
         {session && (
-          <div className="flex items-center justify-between rounded-md border border-white/10 bg-[#0c0c12] px-3 py-2 text-[11px] text-slate-500">
-            <span>
-              Session <span className="font-mono text-slate-400">{session.id.slice(0, 8)}</span>
-            </span>
-            <span>
-              {events.length} event{events.length === 1 ? "" : "s"}
-            </span>
+          <div className="flex flex-col gap-2 rounded-md border border-white/10 bg-[#0c0c12] px-3 py-2 text-[11px] text-slate-500">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                Session <span className="font-mono text-slate-400">{session.id.slice(0, 8)}</span>
+                <span className="text-slate-600"> · </span>
+                <span className="text-slate-400">{session.patientLabel}</span>
+              </span>
+              <span>
+                {events.length} event{events.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            {!active && session.hasRecording && (
+              <div className="flex flex-col gap-1 border-t border-white/10 pt-2 text-[10px] text-slate-400">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <a
+                    href={`/api/tab3/sessions/${session.id}/recording`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="w-fit font-medium text-emerald-400/90 underline-offset-2 hover:underline"
+                  >
+                    Open session recording
+                  </a>
+                  <a
+                    href={`/api/tab3/sessions/${session.id}/recording?download=1`}
+                    className="w-fit font-medium text-sky-400/90 underline-offset-2 hover:underline"
+                    download
+                  >
+                    Download recording
+                  </a>
+                </div>
+                <span className="text-slate-500">
+                  Log times use session seconds (startTs). In the video, seek to max(0, startTs −{" "}
+                  {(session.recordingSessionOffsetSec ?? 0).toFixed(2)}s).
+                </span>
+              </div>
+            )}
           </div>
         )}
       </section>

@@ -147,6 +147,16 @@ const VALID_EVENT_TYPES = new Set<EventType>([
   "fall",
   "respiratory",
   "agitation",
+  "unresponsive",
+  "anaphylaxis",
+  "syncope",
+  "vomiting",
+  "cyanosis",
+  "environmental",
+  "violence",
+  "hypoglycemia",
+  "overdose",
+  "pain_crisis",
   "other",
   "normal",
 ]);
@@ -210,7 +220,7 @@ Return ONLY valid JSON, no markdown fences, no preamble:
   ]
 }
 
-eventType must be one of: choking, bleeding, seizure, cardiac, stroke, fall, respiratory, agitation, other, normal.
+eventType must be one of: choking, bleeding, seizure, cardiac, stroke, fall, respiratory, agitation, unresponsive, anaphylaxis, syncope, vomiting, cyanosis, environmental, violence, hypoglycemia, overdose, pain_crisis, other, normal.
 severity must be one of: normal, low, moderate, urgent, critical.
 
 Only include observations where severity != "normal". For frames with nothing concerning, return observations: [].`;
