@@ -46,7 +46,7 @@ class Mutex {
 
 const mutex = new Mutex();
 
-export type TableName = "uploads" | "events" | "sessions";
+export type TableName = "uploads" | "events" | "sessions" | "alertThreads";
 
 function tablePath(name: TableName): string {
   return path.join(DB_DIR, `${name}.json`);

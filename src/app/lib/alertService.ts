@@ -1,73 +1,33 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { buildRichAlertBody } from "@/app/lib/alertMessageText";
 import { ALERTS_DIR } from "@/app/lib/storage";
 import { publish } from "@/app/lib/sessionBus";
 import type { AnalysisEvent } from "@/app/lib/types";
 
 const DEDUPE_WINDOW_MS = 60_000;
+/** Minimum time between any two real alert sends (Photon worker), in ms. */
+const GLOBAL_ALERT_MIN_INTERVAL_MS = 5_000;
 
 const globalAny = globalThis as unknown as {
   __alertDedupe?: Map<string, number>;
+  __lastGlobalAlertAt?: number;
 };
 
 const dedupe: Map<string, number> =
   globalAny.__alertDedupe ?? (globalAny.__alertDedupe = new Map());
 
-function formatMmSs(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60).toString().padStart(2, "0");
-  return `${m}:${s}`;
+function getLastGlobalAlertAt(): number {
+  return globalAny.__lastGlobalAlertAt ?? 0;
 }
 
-function smsBody(event: AnalysisEvent): string {
-  const ts = formatMmSs(event.startTs);
-  const prefix = event.severity.toUpperCase();
-  return `${prefix}: ${event.patientLabel} — ${event.eventType}. ${event.summary} at ${ts}.`;
+function setLastGlobalAlertAt(t: number): void {
+  globalAny.__lastGlobalAlertAt = t;
 }
 
 function ttsBody(event: AnalysisEvent): string {
   return `Critical alert. ${event.patientLabel}. ${event.summary}.`;
-}
-
-async function sendTwilioSms(event: AnalysisEvent): Promise<void> {
-  const sid = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  const from = process.env.TWILIO_FROM_NUMBER;
-  const to = process.env.NURSE_PHONE;
-
-  if (!sid || !token || !from || !to) {
-    console.warn(
-      "[alertService] Twilio env vars missing (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, NURSE_PHONE); skipping SMS",
-    );
-    return;
-  }
-
-  const auth = Buffer.from(`${sid}:${token}`).toString("base64");
-  const body = new URLSearchParams({
-    To: to,
-    From: from,
-    Body: smsBody(event),
-  });
-
-  const res = await fetch(
-    `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: body.toString(),
-    },
-  );
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Twilio ${res.status}: ${text.slice(0, 200)}`);
-  }
-  console.log(`[alertService] SMS sent to ${to.slice(-4).padStart(to.length, "*")}`);
 }
 
 async function sendElevenLabsTts(event: AnalysisEvent): Promise<string | null> {
@@ -110,6 +70,33 @@ async function sendElevenLabsTts(event: AnalysisEvent): Promise<string | null> {
   return filename;
 }
 
+async function sendPhotonWorkerAlert(event: AnalysisEvent): Promise<void> {
+  const base = (
+    process.env.SPECTRUM_ALERT_WORKER_URL ?? "http://127.0.0.1:39847"
+  ).replace(/\/$/, "");
+  const secret = process.env.SPECTRUM_ALERT_WORKER_SECRET;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (secret) {
+    headers.Authorization = `Bearer ${secret}`;
+  }
+
+  const res = await fetch(`${base}/send-alert`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(event),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Photon worker ${res.status}: ${text.slice(0, 300)}`);
+  }
+  console.log(
+    `[alertService] Photon alert dispatched for event ${event.id} (${event.severity})`,
+  );
+}
+
 export async function sendAlert(event: AnalysisEvent): Promise<void> {
   if (event.severity !== "critical" && event.severity !== "urgent") return;
 
@@ -122,13 +109,25 @@ export async function sendAlert(event: AnalysisEvent): Promise<void> {
     );
     return;
   }
+
+  const lastGlobal = getLastGlobalAlertAt();
+  if (
+    lastGlobal > 0 &&
+    now - lastGlobal < GLOBAL_ALERT_MIN_INTERVAL_MS
+  ) {
+    console.log(
+      `[alertService] global throttle (${GLOBAL_ALERT_MIN_INTERVAL_MS}ms) skipping alert`,
+    );
+    return;
+  }
+
   dedupe.set(dedupeKey, now);
 
   // Mock by default to protect API credits. Set MOCK_ALERTS=false to actually
-  // hit Twilio/ElevenLabs (and put credentials in .env.local).
+  // hit the Spectrum worker + ElevenLabs (and put credentials in .env.local).
   if (process.env.MOCK_ALERTS !== "false") {
     console.log(
-      `[MOCK ALERT][${event.severity.toUpperCase()}] ${event.patientLabel} — ${event.eventType}: ${event.summary} (sms${
+      `[MOCK ALERT][${event.severity.toUpperCase()}]\n${buildRichAlertBody(event)}\n(sms${
         event.severity === "critical" ? " + tts" : ""
       })`,
     );
@@ -136,9 +135,13 @@ export async function sendAlert(event: AnalysisEvent): Promise<void> {
   }
 
   try {
-    await sendTwilioSms(event);
+    await sendPhotonWorkerAlert(event);
+    setLastGlobalAlertAt(Date.now());
   } catch (err) {
-    console.error("[alertService] Twilio SMS failed:", err instanceof Error ? err.message : err);
+    console.error(
+      "[alertService] Photon worker failed:",
+      err instanceof Error ? err.message : err,
+    );
   }
 
   if (event.severity === "critical") {
