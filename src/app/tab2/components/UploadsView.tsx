@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDropzone, type FileRejection } from "react-dropzone";
 import type { Upload, UploadStatus } from "@/app/lib/types";
+import AnalysisViewer from "./AnalysisViewer";
 
 const MAX_BYTES = 500 * 1024 * 1024;
 
@@ -437,15 +438,11 @@ export default function UploadsView() {
               </button>
             </div>
 
-            <div className="overflow-hidden rounded-xl border border-white/10 bg-black">
-              <video
-                key={selected.id}
-                controls
-                preload="metadata"
-                className="aspect-video w-full"
-                src={`/api/tab2/uploads/${selected.id}/video`}
-              />
-            </div>
+            <AnalysisViewer
+              key={selected.id}
+              uploadId={selected.id}
+              status={selected.status}
+            />
 
             {(selected.status === "queued" || selected.status === "analyzing") && (
               <div className="rounded-lg border border-white/10 bg-[#0c0c12] px-4 py-3">
