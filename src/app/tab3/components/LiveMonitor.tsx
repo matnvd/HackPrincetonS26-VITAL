@@ -14,6 +14,10 @@ interface SessionInfo {
   id: string;
   startedAt: number;
   patientLabel: string;
+  /** Set after stop when a recording was saved (see GET session). */
+  hasRecording?: boolean;
+  /** Seconds from session timeline start to video t=0; seek at event.startTs minus this. */
+  recordingSessionOffsetSec?: number;
 }
 
 const STUB_LIVE = process.env.NEXT_PUBLIC_STUB_LIVE === "true";
@@ -26,6 +30,8 @@ export default function LiveMonitor() {
   const [busy, setBusy] = useState(false);
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
   const [patientLabelDraft, setPatientLabelDraft] = useState("");
+  /** Opt-in before Start; if false, no MediaRecorder / upload for this session. */
+  const [recordSession, setRecordSession] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const feedRef = useRef<LiveFeedHandle>(null);
 
@@ -50,6 +56,28 @@ export default function LiveMonitor() {
         );
       } catch (err) {
         console.warn("[LiveMonitor] stop request failed:", err);
+      }
+      try {
+        const r = await fetch(`/api/tab3/sessions/${id}`, { cache: "no-store" });
+        if (r.ok) {
+          const d = (await r.json()) as {
+            session?: { recordingStoragePath?: string; recordingSessionOffsetSec?: number };
+          };
+          const s = d.session;
+          if (s?.recordingStoragePath) {
+            setSession((prev) =>
+              prev && prev.id === id
+                ? {
+                    ...prev,
+                    hasRecording: true,
+                    recordingSessionOffsetSec: s.recordingSessionOffsetSec ?? 0,
+                  }
+                : prev,
+            );
+          }
+        }
+      } catch {
+        /* best-effort */
       }
     }
     closeStream();
@@ -174,17 +202,29 @@ export default function LiveMonitor() {
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             {!active && (
-              <label className="flex min-w-[140px] max-w-[220px] flex-1 items-center gap-2">
-                <span className="sr-only">Patient label</span>
-                <input
-                  type="text"
-                  value={patientLabelDraft}
-                  onChange={(e) => setPatientLabelDraft(e.target.value)}
-                  placeholder="Patient label"
-                  disabled={busy}
-                  className="w-full rounded-md border border-white/15 bg-[#0c0c12] px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:border-emerald-500/40 focus:outline-none disabled:opacity-50"
-                />
-              </label>
+              <>
+                <label className="flex min-w-[140px] max-w-[220px] flex-1 items-center gap-2">
+                  <span className="sr-only">Patient label</span>
+                  <input
+                    type="text"
+                    value={patientLabelDraft}
+                    onChange={(e) => setPatientLabelDraft(e.target.value)}
+                    placeholder="Patient label"
+                    disabled={busy}
+                    className="w-full rounded-md border border-white/15 bg-[#0c0c12] px-2.5 py-1.5 text-xs text-slate-200 placeholder:text-slate-500 focus:border-emerald-500/40 focus:outline-none disabled:opacity-50"
+                  />
+                </label>
+                <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-slate-400">
+                  <input
+                    type="checkbox"
+                    checked={recordSession}
+                    onChange={(e) => setRecordSession(e.target.checked)}
+                    disabled={busy}
+                    className="h-3.5 w-3.5 rounded border-white/25 bg-[#0c0c12] text-emerald-500 focus:ring-emerald-500/40 disabled:opacity-50"
+                  />
+                  Record session video
+                </label>
+              </>
             )}
             {active ? (
               <button
@@ -212,6 +252,7 @@ export default function LiveMonitor() {
           ref={feedRef}
           sessionId={session?.id ?? null}
           active={active}
+          enableRecording={recordSession}
           onError={(err) => {
             setError(err.message);
             void shutdownLiveSession();
@@ -225,15 +266,42 @@ export default function LiveMonitor() {
         )}
 
         {session && (
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/10 bg-[#0c0c12] px-3 py-2 text-[11px] text-slate-500">
-            <span>
-              Session <span className="font-mono text-slate-400">{session.id.slice(0, 8)}</span>
-              <span className="text-slate-600"> · </span>
-              <span className="text-slate-400">{session.patientLabel}</span>
-            </span>
-            <span>
-              {events.length} event{events.length === 1 ? "" : "s"}
-            </span>
+          <div className="flex flex-col gap-2 rounded-md border border-white/10 bg-[#0c0c12] px-3 py-2 text-[11px] text-slate-500">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>
+                Session <span className="font-mono text-slate-400">{session.id.slice(0, 8)}</span>
+                <span className="text-slate-600"> · </span>
+                <span className="text-slate-400">{session.patientLabel}</span>
+              </span>
+              <span>
+                {events.length} event{events.length === 1 ? "" : "s"}
+              </span>
+            </div>
+            {!active && session.hasRecording && (
+              <div className="flex flex-col gap-1 border-t border-white/10 pt-2 text-[10px] text-slate-400">
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                  <a
+                    href={`/api/tab3/sessions/${session.id}/recording`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="w-fit font-medium text-emerald-400/90 underline-offset-2 hover:underline"
+                  >
+                    Open session recording
+                  </a>
+                  <a
+                    href={`/api/tab3/sessions/${session.id}/recording?download=1`}
+                    className="w-fit font-medium text-sky-400/90 underline-offset-2 hover:underline"
+                    download
+                  >
+                    Download recording
+                  </a>
+                </div>
+                <span className="text-slate-500">
+                  Log times use session seconds (startTs). In the video, seek to max(0, startTs −{" "}
+                  {(session.recordingSessionOffsetSec ?? 0).toFixed(2)}s).
+                </span>
+              </div>
+            )}
           </div>
         )}
       </section>

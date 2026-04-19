@@ -3,11 +3,20 @@ import path from "node:path";
 
 export const STORAGE_ROOT = path.resolve(process.cwd(), "storage");
 export const VIDEOS_DIR = path.join(STORAGE_ROOT, "videos");
+/** Tab 3 live session screen recordings (WebM); correlates with event.startTs via session offset. */
+export const LIVE_RECORDINGS_DIR = path.join(VIDEOS_DIR, "live");
 export const THUMBNAILS_DIR = path.join(STORAGE_ROOT, "thumbnails");
 export const ALERTS_DIR = path.join(STORAGE_ROOT, "alerts");
 export const DB_DIR = path.join(STORAGE_ROOT, "db");
 
-const REQUIRED_DIRS = [STORAGE_ROOT, VIDEOS_DIR, THUMBNAILS_DIR, ALERTS_DIR, DB_DIR];
+const REQUIRED_DIRS = [
+  STORAGE_ROOT,
+  VIDEOS_DIR,
+  LIVE_RECORDINGS_DIR,
+  THUMBNAILS_DIR,
+  ALERTS_DIR,
+  DB_DIR,
+];
 
 async function ensureDirs(): Promise<void> {
   await Promise.all(REQUIRED_DIRS.map((dir) => fs.mkdir(dir, { recursive: true })));

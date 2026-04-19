@@ -6,6 +6,10 @@
  * The API key is browser-exposed on purpose for this hackathon demo. For production,
  * use a server-mediated flow (e.g. POST /streams server-side, return a LiveKit token
  * to the client, server consumes WebSocket at /ws/streams/{id}).
+ *
+ * Session recording: browser MediaRecorder on the same camera stream; uploaded on stop
+ * to POST /api/tab3/sessions/[id]/recording while the session is still active. Event
+ * startTs (session seconds) aligns with video at startTs − recordingSessionOffsetSec.
  */
 
 import {
@@ -22,6 +26,19 @@ import type { EventType, Severity } from "@/app/lib/types";
 
 const STUB_LIVE = process.env.NEXT_PUBLIC_STUB_LIVE === "true";
 
+function pickRecorderMime(): string {
+  if (typeof MediaRecorder === "undefined") return "video/webm";
+  const candidates = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+  ];
+  for (const c of candidates) {
+    if (MediaRecorder.isTypeSupported(c)) return c;
+  }
+  return "video/webm";
+}
+
 export interface LiveFeedHandle {
   stop: () => Promise<void>;
 }
@@ -29,6 +46,8 @@ export interface LiveFeedHandle {
 interface Props {
   sessionId: string | null;
   active: boolean;
+  /** If false, no browser MediaRecorder / upload (set from Live Monitor before Start). */
+  enableRecording?: boolean;
   onError?: (err: Error) => void;
 }
 
@@ -176,12 +195,18 @@ const STUB_NORMAL_EXAMPLES: Array<{
 ];
 
 const LiveFeed = forwardRef<LiveFeedHandle, Props>(function LiveFeed(
-  { sessionId, active, onError },
+  { sessionId, active, enableRecording = false, onError },
   ref,
 ) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const visionRef = useRef<RealtimeVision | null>(null);
   const stubIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  /** Seconds from session timeline start to t=0 of the recorded file. */
+  const recordingOffsetSecRef = useRef(0);
+  const recorderStartMsRef = useRef<number | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
   const onErrorRef = useRef(onError);
   const sessionStartRef = useRef(Date.now());
   const [error, setError] = useState<string | null>(null);
@@ -193,6 +218,10 @@ const LiveFeed = forwardRef<LiveFeedHandle, Props>(function LiveFeed(
     onErrorRef.current = onError;
   }, [onError]);
 
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
+
   const clearStubInterval = useCallback(() => {
     if (stubIntervalRef.current) {
       clearInterval(stubIntervalRef.current);
@@ -200,7 +229,55 @@ const LiveFeed = forwardRef<LiveFeedHandle, Props>(function LiveFeed(
     }
   }, []);
 
+  const stopRecorderAndUpload = useCallback(async () => {
+    const mr = mediaRecorderRef.current;
+    mediaRecorderRef.current = null;
+    if (!mr || mr.state === "inactive") {
+      recordedChunksRef.current = [];
+      recorderStartMsRef.current = null;
+      return;
+    }
+    const sid = sessionIdRef.current;
+    await new Promise<void>((resolve) => {
+      const done = () => resolve();
+      mr.addEventListener("stop", done, { once: true });
+      try {
+        mr.stop();
+      } catch {
+        done();
+      }
+    });
+    const chunks = recordedChunksRef.current;
+    recordedChunksRef.current = [];
+    const blob = new Blob(chunks, { type: mr.mimeType || "video/webm" });
+    const durationSec =
+      recorderStartMsRef.current != null
+        ? (Date.now() - recorderStartMsRef.current) / 1000
+        : 0;
+    recorderStartMsRef.current = null;
+    const offsetSec = recordingOffsetSecRef.current;
+    if (!sid || blob.size < 32) return;
+    const fd = new FormData();
+    fd.append("file", blob, "session.webm");
+    fd.append("sessionOffsetSec", String(offsetSec));
+    fd.append("durationSec", String(durationSec));
+    fd.append("mimeType", mr.mimeType || "video/webm");
+    try {
+      const res = await fetch(`/api/tab3/sessions/${sid}/recording`, {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        console.error("[LiveFeed] recording upload failed:", res.status, t);
+      }
+    } catch (err) {
+      console.error("[LiveFeed] recording upload failed:", err);
+    }
+  }, []);
+
   const stopVision = useCallback(async () => {
+    await stopRecorderAndUpload();
     clearStubInterval();
     const v = visionRef.current;
     visionRef.current = null;
@@ -215,7 +292,7 @@ const LiveFeed = forwardRef<LiveFeedHandle, Props>(function LiveFeed(
       videoRef.current.srcObject = null;
     }
     setReady(false);
-  }, [clearStubInterval]);
+  }, [clearStubInterval, stopRecorderAndUpload]);
 
   useImperativeHandle(
     ref,
@@ -452,6 +529,32 @@ const LiveFeed = forwardRef<LiveFeedHandle, Props>(function LiveFeed(
             /* autoplay restrictions; element has autoPlay attr */
           });
         }
+        if (
+          enableRecording &&
+          stream &&
+          typeof MediaRecorder !== "undefined"
+        ) {
+          try {
+            const mime = pickRecorderMime();
+            const mr = mime
+              ? new MediaRecorder(stream, { mimeType: mime })
+              : new MediaRecorder(stream);
+            recordedChunksRef.current = [];
+            recordingOffsetSecRef.current =
+              (Date.now() - sessionStartRef.current) / 1000;
+            recorderStartMsRef.current = Date.now();
+            mr.ondataavailable = (e) => {
+              if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+            };
+            mr.onerror = (ev) => {
+              console.error("[LiveFeed] MediaRecorder error:", ev);
+            };
+            mr.start(1000);
+            mediaRecorderRef.current = mr;
+          } catch (recErr) {
+            console.warn("[LiveFeed] MediaRecorder not started:", recErr);
+          }
+        }
         setReady(true);
       } catch (err) {
         visionRef.current = null;
@@ -472,7 +575,7 @@ const LiveFeed = forwardRef<LiveFeedHandle, Props>(function LiveFeed(
       cancelled = true;
       void stopVision();
     };
-  }, [active, sessionId, stopVision]);
+  }, [active, sessionId, stopVision, enableRecording]);
 
   useEffect(() => {
     if (inferenceLogs.length === 0) return;
