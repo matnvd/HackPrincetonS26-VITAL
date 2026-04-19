@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AnalysisEvent, Upload, UploadStatus } from "@/app/lib/types";
 import { AnalysisViewerSkeleton } from "@/app/components/Skeletons";
+import SeverityFilterChips, {
+  type SeverityFilter,
+} from "@/app/components/SeverityFilterChips";
 import VideoPlayer, { type VideoPlayerHandle } from "./VideoPlayer";
 import EventTimeline from "./EventTimeline";
 import EventLogs from "./EventLogs";
@@ -22,6 +25,7 @@ export default function AnalysisViewer({ uploadId, status }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [videoDuration, setVideoDuration] = useState(0);
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
   const playerRef = useRef<VideoPlayerHandle>(null);
 
   useEffect(() => {
@@ -51,6 +55,19 @@ export default function AnalysisViewer({ uploadId, status }: Props) {
     if (!data) return [];
     return [...data.events].sort((a, b) => a.startTs - b.startTs);
   }, [data]);
+
+  const severityCounts = useMemo(() => {
+    const counts: Partial<Record<SeverityFilter, number>> = { all: sortedEvents.length };
+    for (const e of sortedEvents) {
+      counts[e.severity] = (counts[e.severity] ?? 0) + 1;
+    }
+    return counts;
+  }, [sortedEvents]);
+
+  const filteredEvents = useMemo(() => {
+    if (severityFilter === "all") return sortedEvents;
+    return sortedEvents.filter((e) => e.severity === severityFilter);
+  }, [sortedEvents, severityFilter]);
 
   const duration = useMemo(() => {
     if (data?.upload.durationSeconds && data.upload.durationSeconds > 0) {
@@ -146,15 +163,26 @@ export default function AnalysisViewer({ uploadId, status }: Props) {
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="mb-1.5 flex items-center justify-between">
           <div className="text-[10px] font-medium uppercase tracking-widest text-slate-500">
-            Events ({sortedEvents.length})
+            Events ({filteredEvents.length}
+            {filteredEvents.length !== sortedEvents.length
+              ? ` of ${sortedEvents.length}`
+              : ""}
+            )
           </div>
           <div className="text-[10px] text-slate-600">
             space · ←/→ 5s · ↑/↓ prev/next
           </div>
         </div>
+        <div className="mb-2">
+          <SeverityFilterChips
+            value={severityFilter}
+            onChange={setSeverityFilter}
+            counts={severityCounts}
+          />
+        </div>
         <div className="-mr-2 max-h-[50vh] overflow-y-auto pr-2">
           <EventLogs
-            events={sortedEvents}
+            events={filteredEvents}
             activeEventId={activeEvent?.id ?? null}
             onSelect={(evt) => handleSeek(evt.startTs)}
           />

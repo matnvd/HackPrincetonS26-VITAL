@@ -1,12 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AnalysisEvent,
   EventType,
   Severity,
 } from "@/app/lib/types";
 import { fetchWithToast } from "@/app/lib/fetchWithToast";
+import SeverityFilterChips, {
+  type SeverityFilter,
+} from "@/app/components/SeverityFilterChips";
 import LiveFeed from "./LiveFeed";
 import LiveLogs from "./LiveLogs";
 import KeyEventsSummary from "./KeyEventsSummary";
@@ -75,6 +78,7 @@ export default function LiveMonitor() {
   const [events, setEvents] = useState<AnalysisEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
   const eventSourceRef = useRef<EventSource | null>(null);
   const stubIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -223,6 +227,19 @@ export default function LiveMonitor() {
   const sortedEvents = events;
   const sessionStart = session?.startedAt ?? Date.now();
 
+  const severityCounts = useMemo(() => {
+    const counts: Partial<Record<SeverityFilter, number>> = { all: sortedEvents.length };
+    for (const e of sortedEvents) {
+      counts[e.severity] = (counts[e.severity] ?? 0) + 1;
+    }
+    return counts;
+  }, [sortedEvents]);
+
+  const filteredLogEvents = useMemo(() => {
+    if (severityFilter === "all") return sortedEvents;
+    return sortedEvents.filter((e) => e.severity === severityFilter);
+  }, [sortedEvents, severityFilter]);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-[#09090f] text-slate-200 lg:flex-row">
       <section className="flex w-full min-w-0 flex-col gap-4 border-b border-white/10 p-6 lg:basis-[55%] lg:shrink-0 lg:border-b-0 lg:border-r">
@@ -291,10 +308,17 @@ export default function LiveMonitor() {
           <KeyEventsSummary events={sortedEvents} />
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-2">
-          <div className="text-[10px] font-medium uppercase tracking-widest text-slate-500">
-            Live log
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[10px] font-medium uppercase tracking-widest text-slate-500">
+              Live log
+            </div>
           </div>
-          <LiveLogs events={sortedEvents} />
+          <SeverityFilterChips
+            value={severityFilter}
+            onChange={setSeverityFilter}
+            counts={severityCounts}
+          />
+          <LiveLogs events={filteredLogEvents} />
         </div>
       </section>
     </div>
