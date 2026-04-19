@@ -24,7 +24,14 @@ export async function findAlertThreadBySpaceId(
   spaceId: string,
 ): Promise<AlertThreadRow | undefined> {
   const rows = await readTable<AlertThreadRow>("alertThreads");
-  return rows.find((r) => r.spaceId === spaceId);
+  const matching = rows.filter((r) => r.spaceId === spaceId);
+  // Prefer the most recent open thread; fall back to most recently updated.
+  const open = matching.filter((r) => r.repliesRemaining > 0);
+  const pool = open.length > 0 ? open : matching;
+  return pool.reduce<AlertThreadRow | undefined>(
+    (best, r) => (!best || r.updatedAt > best.updatedAt ? r : best),
+    undefined,
+  );
 }
 
 export async function updateAlertThread(
