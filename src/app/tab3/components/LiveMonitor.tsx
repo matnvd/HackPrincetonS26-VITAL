@@ -153,6 +153,14 @@ export default function LiveMonitor() {
                 if (prev.some((e) => e.id === evt.id)) return prev;
                 return [...prev, evt];
               });
+            } else if (parsed.type === "play_alert") {
+              const data = parsed.data as { audioPath?: string } | undefined;
+              if (data?.audioPath) {
+                const audio = new Audio(`/api/tab3/alerts/${data.audioPath}`);
+                audio.play().catch((err) =>
+                  console.error("[LiveMonitor] audio playback failed:", err),
+                );
+              }
             } else if (parsed.type === "session_ended") {
               closeStream();
               setActive(false);
