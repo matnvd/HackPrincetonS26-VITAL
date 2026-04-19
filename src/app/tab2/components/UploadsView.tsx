@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDropzone, type FileRejection } from "react-dropzone";
 import type { Upload, UploadStatus } from "@/app/lib/types";
 import StatusBadge from "@/app/components/StatusBadge";
+import { fetchWithToast } from "@/app/lib/fetchWithToast";
+import { toast } from "@/app/lib/ui/useToast";
 import AnalysisViewer from "./AnalysisViewer";
 
 const MAX_BYTES = 500 * 1024 * 1024;
@@ -179,6 +181,7 @@ export default function UploadsView() {
               ? { ...prev, [tempId]: { ...prev[tempId], status: "failed", error: msg } }
               : prev,
           );
+          toast(msg, "error");
         }
       });
 
@@ -191,6 +194,7 @@ export default function UploadsView() {
               }
             : prev,
         );
+        toast("Upload failed: network error", "error");
       });
 
       xhr.open("POST", "/api/tab2/uploads");
@@ -242,15 +246,16 @@ export default function UploadsView() {
     async (id: string) => {
       if (!confirm("Delete this upload? This cannot be undone.")) return;
       try {
-        const res = await fetch(`/api/tab2/uploads/${id}`, { method: "DELETE" });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.error || `Delete failed (${res.status})`);
-        }
+        const res = await fetchWithToast(
+          `/api/tab2/uploads/${id}`,
+          { method: "DELETE" },
+          { errorMessage: "Delete failed" },
+        );
+        if (!res.ok) return;
         if (selectedId === id) setSelectedId(null);
         refresh();
-      } catch (err) {
-        alert(err instanceof Error ? err.message : String(err));
+      } catch {
+        /* fetchWithToast already showed the toast */
       }
     },
     [refresh, selectedId],
@@ -261,15 +266,17 @@ export default function UploadsView() {
     if (seeding) return;
     setSeeding(true);
     try {
-      const res = await fetch("/api/tab2/demo/seed", { method: "POST" });
+      const res = await fetchWithToast(
+        "/api/tab2/demo/seed",
+        { method: "POST" },
+        { errorMessage: "Could not load sample" },
+      );
+      if (!res.ok) return;
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(body.error || `Seed failed (${res.status})`);
-      }
       await refresh();
       if (body.uploadId) setSelectedId(body.uploadId);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : String(err));
+    } catch {
+      /* fetchWithToast already showed the toast */
     } finally {
       setSeeding(false);
     }

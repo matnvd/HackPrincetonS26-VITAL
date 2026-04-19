@@ -6,6 +6,7 @@ import type {
   EventType,
   Severity,
 } from "@/app/lib/types";
+import { fetchWithToast } from "@/app/lib/fetchWithToast";
 import LiveFeed from "./LiveFeed";
 import LiveLogs from "./LiveLogs";
 import KeyEventsSummary from "./KeyEventsSummary";
@@ -118,8 +119,12 @@ export default function LiveMonitor() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/tab3/sessions", { method: "POST" });
-      const body = await res.json();
+      const res = await fetchWithToast(
+        "/api/tab3/sessions",
+        { method: "POST" },
+        { errorMessage: "Could not start live session" },
+      );
+      const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `Failed to start (${res.status})`);
       const id: string = body.sessionId;
       const startedAt = Date.now();
@@ -189,7 +194,11 @@ export default function LiveMonitor() {
       closeStream();
       setActive(false);
       try {
-        await fetch(`/api/tab3/sessions/${session.id}/end`, { method: "POST" });
+        await fetchWithToast(
+          `/api/tab3/sessions/${session.id}/end`,
+          { method: "POST" },
+          { errorMessage: "Could not end session cleanly" },
+        );
       } catch (err) {
         console.warn("[LiveMonitor] stop request failed:", err);
       }

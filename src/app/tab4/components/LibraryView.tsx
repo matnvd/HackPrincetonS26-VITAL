@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AnalysisViewer from "@/app/tab2/components/AnalysisViewer";
+import { fetchWithToast } from "@/app/lib/fetchWithToast";
 import type { LibraryRow } from "../types";
 import UploadCard from "./UploadCard";
 
@@ -35,15 +36,16 @@ export default function LibraryView() {
   const handleDelete = useCallback(
     async (id: string) => {
       try {
-        const res = await fetch(`/api/tab2/uploads/${id}`, { method: "DELETE" });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.error || `Delete failed (${res.status})`);
-        }
+        const res = await fetchWithToast(
+          `/api/tab2/uploads/${id}`,
+          { method: "DELETE" },
+          { errorMessage: "Delete failed" },
+        );
+        if (!res.ok) return;
         setUploads((prev) => prev.filter((u) => u.id !== id));
         setSelectedId((prev) => (prev === id ? null : prev));
-      } catch (err) {
-        alert(err instanceof Error ? err.message : String(err));
+      } catch {
+        /* fetchWithToast already showed the toast */
       }
     },
     [],
