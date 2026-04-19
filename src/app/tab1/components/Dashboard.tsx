@@ -60,7 +60,13 @@ function PatientCard({ patient, index, onDismiss }: { patient: Patient; index: n
 
   return (
     <div className="rounded-2xl p-3.5 flex gap-3" style={{ background: cfg.cardBg, border: `1px solid ${cfg.borderColor}55` }}>
-      <Thumbnail triage={patient.triage} index={index} />
+      {patient.thumbnail ? (
+        <div className="flex-shrink-0 w-[76px] rounded-xl overflow-hidden self-stretch" style={{ background: cfg.thumbBg, border: `1px solid ${cfg.borderColor}30` }}>
+          <img src={patient.thumbnail} alt={patient.id} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        </div>
+      ) : (
+        <Thumbnail triage={patient.triage} index={index} />
+      )}
 
       <div className="flex-1 min-w-0 flex flex-col">
         <div className="flex items-center gap-1.5 mb-2 flex-wrap">

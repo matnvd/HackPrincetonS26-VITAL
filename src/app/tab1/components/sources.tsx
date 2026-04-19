@@ -42,6 +42,40 @@ type Posture = "standing" | "sitting" | "lying";
 // Pose data sent back from the YOLOv8 worker (posture already classified off-thread)
 interface WorkerPose { keypoints: Keypoint[]; score: number; posture: Posture; }
 
+// crop video frame to each detected person's pose bounding box, sorted left-to-right
+function computePersonCrops(video: HTMLVideoElement, poses: WorkerPose[]): string[] {
+  if (poses.length === 0 || video.readyState < 2 || video.videoWidth === 0) return [];
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const tmp = document.createElement("canvas");
+  const ctx = tmp.getContext("2d");
+  if (!ctx) return [];
+
+  const sorted = [...poses].sort((a, b) => {
+    const cx = (p: WorkerPose) => { const xs = p.keypoints.filter(k=>k.conf>0.3).map(k=>k.x); return xs.length ? (Math.min(...xs)+Math.max(...xs))/2 : 0.5; };
+    return cx(a) - cx(b);
+  });
+
+  return sorted.flatMap(pose => {
+    const vis = pose.keypoints.filter(k => k.conf > 0.3);
+    if (vis.length < 3) return [];
+    const xs = vis.map(k => k.x), ys = vis.map(k => k.y);
+    const bw = Math.max(...xs) - Math.min(...xs);
+    const bh = Math.max(...ys) - Math.min(...ys);
+    // add padding: 15% sides, 20% top (head room), 10% bottom
+    const x1 = Math.max(0, Math.min(...xs) - bw * 0.15);
+    const y1 = Math.max(0, Math.min(...ys) - bh * 0.20);
+    const x2 = Math.min(1, Math.max(...xs) + bw * 0.15);
+    const y2 = Math.min(1, Math.max(...ys) + bh * 0.10);
+    const pw = (x2 - x1) * vw, ph = (y2 - y1) * vh;
+    if (pw < 10 || ph < 10) return [];
+    tmp.width = Math.round(pw);
+    tmp.height = Math.round(ph);
+    ctx.drawImage(video, x1 * vw, y1 * vh, pw, ph, 0, 0, tmp.width, tmp.height);
+    return [tmp.toDataURL("image/jpeg", 0.82)];
+  });
+}
+
 // draw skeleton overlay — green=standing, amber=sitting, red=lying
 function drawSkeleton(
   ctx: CanvasRenderingContext2D,
@@ -156,6 +190,10 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
 
   // IMPORTANT: if anomaly detected by YOLOv8, send to api route.ts and analyze returned json
   const analyzeFrame = useCallback(async (deviceId: string, cameraLabel: string, frameData: string) => {
+    // capture person crops synchronously now, before the async API round-trip
+    const video = deviceId === "sim" ? simVideoRef.current : videoRefs.current[deviceId];
+    const crops = video ? computePersonCrops(video, lastPosesRef.current[deviceId] ?? []) : [];
+
     if (deviceId === "sim") {
       setSimAnalyzing(true);
       simAnalyzingRef.current = true;
@@ -177,12 +215,14 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
       if (parsed.patients?.length > 0) {
         setPatients((prev) => {
           const map: Record<string, Patient> = Object.fromEntries(prev.map((p) => [`${p.cameraLabel}:${p.id}`, p]));
-          for (const p of parsed.patients as Patient[]) {
+          (parsed.patients as Patient[]).forEach((p, i) => {
             const exactKey = `${cameraLabel}:${p.id}`;
             // prefer exact match, fall back to fuzzy match to avoid duplicates
             const key = map[exactKey] ? exactKey : (findSimilarKey(map, p.id, cameraLabel) ?? exactKey);
-            map[key] = { ...p, cameraLabel, firstSeen: map[key]?.firstSeen || now, lastSeen: now };
-          }
+            // keep existing thumbnail — only set on first detection so the card doesn't flicker
+            const thumbnail = map[key]?.thumbnail ?? crops[i] ?? crops[0] ?? frameData;
+            map[key] = { ...p, thumbnail, cameraLabel, firstSeen: map[key]?.firstSeen || now, lastSeen: now };
+          });
           return Object.values(map).sort(
             (a, b) => (TRIAGE_ORDER[a.triage] ?? 9) - (TRIAGE_ORDER[b.triage] ?? 9)
           );

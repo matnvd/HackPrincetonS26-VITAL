@@ -12,4 +12,5 @@ export interface Patient {
   firstSeen: string;
   lastSeen: string;
   cameraLabel: string;
+  thumbnail?: string; // data URL — cropped from the video frame at time of detection
 }
