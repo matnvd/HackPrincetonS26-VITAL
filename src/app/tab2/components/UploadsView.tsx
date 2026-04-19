@@ -256,6 +256,25 @@ export default function UploadsView() {
     [refresh, selectedId],
   );
 
+  const [seeding, setSeeding] = useState(false);
+  const handleLoadSample = useCallback(async () => {
+    if (seeding) return;
+    setSeeding(true);
+    try {
+      const res = await fetch("/api/tab2/demo/seed", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error || `Seed failed (${res.status})`);
+      }
+      await refresh();
+      if (body.uploadId) setSelectedId(body.uploadId);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSeeding(false);
+    }
+  }, [refresh, seeding]);
+
   const selected = useMemo(
     () => uploads.find((u) => u.id === selectedId) ?? null,
     [uploads, selectedId],
@@ -296,13 +315,26 @@ export default function UploadsView() {
             {isDragActive ? "Drop to upload" : "Drag & drop video files here"}
           </div>
           <div className="text-xs text-slate-500">video/* up to 500MB</div>
-          <button
-            type="button"
-            onClick={open}
-            className="mt-2 rounded-md border border-white/15 bg-white/5 px-3 py-1 text-xs font-medium text-slate-200 transition-colors hover:bg-white/10"
-          >
-            Choose files
-          </button>
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={open}
+              className="rounded-md border border-white/15 bg-white/5 px-3 py-1 text-xs font-medium text-slate-200 transition-colors hover:bg-white/10"
+            >
+              Choose files
+            </button>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleLoadSample();
+              }}
+              disabled={seeding}
+              className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:opacity-50"
+            >
+              {seeding ? "Loading…" : "Load sample"}
+            </button>
+          </div>
         </div>
 
         {pendingList.length > 0 && (
