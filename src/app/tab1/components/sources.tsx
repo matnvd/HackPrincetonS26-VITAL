@@ -704,6 +704,10 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
         .live-dot { animation: blink 1.2s ease infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
         .spin { animation: spin 1s linear infinite; }
+        @keyframes pulse-critical { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.7),0 0 0 0 rgba(239,68,68,0.3)} 50%{box-shadow:0 0 0 4px rgba(239,68,68,0.4),0 0 16px 4px rgba(239,68,68,0.2)} }
+        @keyframes pulse-urgent { 0%,100%{box-shadow:0 0 0 0 rgba(249,115,22,0.7),0 0 0 0 rgba(249,115,22,0.3)} 50%{box-shadow:0 0 0 4px rgba(249,115,22,0.4),0 0 16px 4px rgba(249,115,22,0.2)} }
+        .alert-critical { border-color: rgb(239,68,68) !important; animation: pulse-critical 1.4s ease-in-out infinite; }
+        .alert-urgent   { border-color: rgb(249,115,22) !important; animation: pulse-urgent 1.8s ease-in-out infinite; }
       `}</style>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 440px", minHeight: "calc(100vh - 52px)" }}>
@@ -721,8 +725,13 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
 
           {/* Video grid — cameras + active simulations */}
           <div style={{ display: "grid", gridTemplateColumns: totalTiles >= 3 ? "1fr 1fr 1fr" : totalTiles === 2 ? "1fr 1fr" : "1fr", gap: "12px" }}>
-            {Object.values(activeCameras).map((cam) => (
-              <div key={cam.deviceId} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
+            {Object.values(activeCameras).map((cam) => {
+              const camPatients = visible.filter(p => p.cameraLabel === cam.deviceId || p.cameraLabel === cam.label);
+              const hasCritical = camPatients.some(p => p.triage === "CRITICAL");
+              const hasUrgent   = !hasCritical && camPatients.some(p => p.triage === "URGENT");
+              const alertClass  = hasCritical ? "alert-critical" : hasUrgent ? "alert-urgent" : "";
+              return (
+              <div key={cam.deviceId} className={alertClass} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
                 <video ref={(el) => { videoRefs.current[cam.deviceId] = el; if (el && el.srcObject !== cam.stream) { el.srcObject = cam.stream; el.play(); } }} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted playsInline autoPlay />
                 <canvas ref={(el) => { canvasRefs.current[cam.deviceId] = el; }} style={{ display: "none" }} />
                 <canvas
@@ -740,13 +749,18 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
 
             {/* Pre-render ALL sim video elements (hidden when inactive) so refs are always available before startSimulation runs */}
             {videoFiles.map((filename) => {
               const active = simulatingFiles.includes(filename);
+              const simPatients = visible.filter(p => p.cameraLabel === filename);
+              const simCritical = simPatients.some(p => p.triage === "CRITICAL");
+              const simUrgent   = !simCritical && simPatients.some(p => p.triage === "URGENT");
+              const simAlert    = simCritical ? "alert-critical" : simUrgent ? "alert-urgent" : "";
               return (
-                <div key={filename} style={{ display: active ? "block" : "none", background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
+                <div key={filename} className={active ? simAlert : ""} style={{ display: active ? "block" : "none", background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
                   <video ref={(el) => { simVideoRefs.current[filename] = el; }} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted playsInline />
                   <canvas ref={(el) => { simCanvasRefs.current[filename] = el; }} style={{ display: "none" }} />
                   <canvas
