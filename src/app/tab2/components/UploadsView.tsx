@@ -19,6 +19,11 @@ interface PendingUpload {
   error?: string;
 }
 
+interface AnalysisProgress {
+  percent: number;
+  message: string;
+}
+
 const STATUS_STYLE: Record<UploadStatus, string> = {
   uploading: "bg-blue-500/15 text-blue-300 border-blue-500/30",
   queued: "bg-slate-500/15 text-slate-300 border-slate-500/30",
@@ -63,6 +68,7 @@ export default function UploadsView() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [listError, setListError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [progressById, setProgressById] = useState<Record<string, AnalysisProgress>>({});
 
   const refresh = useCallback(async () => {
     try {
@@ -87,6 +93,55 @@ export default function UploadsView() {
       setSelectedId(uploads[0].id);
     }
   }, [uploads, selectedId]);
+
+  const selectedStatus = useMemo(
+    () => uploads.find((u) => u.id === selectedId)?.status,
+    [uploads, selectedId],
+  );
+
+  useEffect(() => {
+    if (!selectedId) return;
+    if (selectedStatus !== "queued" && selectedStatus !== "analyzing") return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/tab2/uploads/${selectedId}/progress`, {
+          cache: "no-store",
+        });
+        if (!res.ok || cancelled) return;
+        const data: { status: UploadStatus; percent: number; message: string } = await res.json();
+
+        setProgressById((prev) => ({
+          ...prev,
+          [selectedId]: { percent: data.percent, message: data.message },
+        }));
+        setUploads((prev) =>
+          prev.map((u) => (u.id === selectedId ? { ...u, status: data.status } : u)),
+        );
+
+        if (data.status === "done") {
+          const detailRes = await fetch(`/api/tab2/uploads/${selectedId}`, { cache: "no-store" });
+          if (detailRes.ok) {
+            const detail = await detailRes.json();
+            console.log(`[tab2] analysis complete for ${selectedId}`, detail);
+          }
+          refresh();
+        } else if (data.status === "failed") {
+          refresh();
+        }
+      } catch {
+        /* transient network errors are fine; next tick will retry */
+      }
+    };
+
+    poll();
+    const intervalId = setInterval(poll, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [selectedId, selectedStatus, refresh]);
 
   const startUpload = useCallback(
     (file: File) => {
@@ -392,9 +447,30 @@ export default function UploadsView() {
               />
             </div>
 
-            {selected.error && (
+            {(selected.status === "queued" || selected.status === "analyzing") && (
+              <div className="rounded-lg border border-white/10 bg-[#0c0c12] px-4 py-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-slate-300">
+                    {progressById[selected.id]?.message ||
+                      (selected.status === "queued" ? "Queued" : "Analyzing…")}
+                  </span>
+                  <span className="font-mono text-slate-500">
+                    {progressById[selected.id]?.percent ?? 0}%
+                  </span>
+                </div>
+                <div className="mt-2 h-1.5 w-full overflow-hidden rounded bg-white/5">
+                  <div
+                    className="h-full bg-blue-400 transition-all duration-300"
+                    style={{ width: `${progressById[selected.id]?.percent ?? 0}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {selected.status === "failed" && (
               <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
-                {selected.error}
+                <div className="font-medium">Analysis failed</div>
+                {selected.error && <div className="mt-1 text-red-300/80">{selected.error}</div>}
               </div>
             )}
           </div>

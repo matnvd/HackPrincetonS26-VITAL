@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { VIDEOS_DIR, insert, readTable } from "@/app/lib/storage";
+import { startAnalysis } from "@/app/lib/analysisRunner";
 import type { AnalysisEvent, Upload } from "@/app/lib/types";
 
 export const runtime = "nodejs";
@@ -48,6 +49,8 @@ export async function POST(req: Request) {
       createdAt: new Date().toISOString(),
     };
     await insert<Upload>("uploads", row);
+
+    void startAnalysis(id);
 
     return NextResponse.json({ uploadId: id });
   } catch (err) {
