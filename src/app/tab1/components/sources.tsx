@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { Patient } from "@/app/types";
+import type { Patient } from "@/app/tab1/types";
 import Dashboard from "./Dashboard";
 
 const SAMPLE_INTERVAL_MS = 4000; // increase during demo
@@ -14,7 +14,6 @@ function wordSimilarity(a: string, b: string): number {
   return intersection / Math.max(wa.size, wb.size, 1);
 }
 
-// find an existing patient whose descriptor is ≥45% word-overlap with the incoming one
 function findSimilarKey(map: Record<string, Patient>, incoming: string, camLabel: string): string | null {
   let bestKey: string | null = null;
   let bestScore = 0.45;
@@ -25,8 +24,6 @@ function findSimilarKey(map: Record<string, Patient>, incoming: string, camLabel
   }
   return bestKey;
 }
-
-
 
 interface Event {
   time: string;
@@ -48,7 +45,6 @@ interface ActiveCamera {
 interface Props { onPatientsChange?: (patients: Patient[]) => void; }
 
 export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
-  // per-camera video/canvas elements stored by deviceId
   const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
   const canvasRefs = useRef<Record<string, HTMLCanvasElement | null>>({});
   const activeCamerasRef = useRef<Record<string, ActiveCamera>>({});
@@ -60,17 +56,15 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
 
   useEffect(() => { onPatientsChange?.(patients); }, [patients, onPatientsChange]);
 
-  // simulate mode — video files from public/video_samples/
   const [videoFiles, setVideoFiles] = useState<string[]>([]);
-  const [simulating, setSimulating] = useState<string | null>(null); // filename currently simulating
-  const [simAnalyzing, setSimAnalyzing] = useState(false); // shows the analyzing indicator on the sim tile
+  const [simulating, setSimulating] = useState<string | null>(null);
+  const [simAnalyzing, setSimAnalyzing] = useState(false);
   const simIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const simVideoRef = useRef<HTMLVideoElement | null>(null);
   const simCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const simAnalyzingRef = useRef(false); // guard against concurrent sim API calls
+  const simAnalyzingRef = useRef(false);
   const simEndedHandlerRef = useRef<(() => void) | null>(null);
 
-  // keep ref in sync so interval callbacks always see latest state
   useEffect(() => { activeCamerasRef.current = activeCameras; }, [activeCameras]);
 
   const addEvent = useCallback((msg: string, level = "info") => {
@@ -78,7 +72,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     setEvents((prev) => [{ time, msg, level }, ...prev].slice(0, 30));
   }, []);
 
-  // enumerate available cameras on mount
   useEffect(() => {
     navigator.mediaDevices.enumerateDevices().then((all) => {
       const cams = all
@@ -88,9 +81,8 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     });
   }, []);
 
-  // fetch available video files from public/video_samples/
   useEffect(() => {
-    fetch("/api/videos").then((r) => r.json()).then((d) => setVideoFiles(d.videos ?? []));
+    fetch("/api/tab1/videos").then((r) => r.json()).then((d) => setVideoFiles(d.videos ?? []));
   }, []);
 
   const captureFrame = useCallback((deviceId: string): string | null => {
@@ -99,13 +91,12 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     if (!video || !canvas || video.readyState < 2) return null;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
-    canvas.width = 320; // increase if doing longer distance demo
-    canvas.height = 180; // increase if doing longer distance demo
+    canvas.width = 320;
+    canvas.height = 180;
     ctx.drawImage(video, 0, 0, 320, 180);
     return canvas.toDataURL("image/jpeg", 0.65);
   }, []);
 
-  // if motion < 0.4%, skip api call
   const hasMotion = useCallback((deviceId: string, frameData: string): boolean => {
     const prev = activeCamerasRef.current[deviceId]?.prevFrameData;
     if (!prev) {
@@ -118,7 +109,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     return ratio > 0.004;
   }, []);
 
-  // IMPORTANT: if motion, send to api route.ts and analyze returned json
   const analyzeFrame = useCallback(async (deviceId: string, cameraLabel: string, frameData: string) => {
     if (deviceId === "sim") {
       setSimAnalyzing(true);
@@ -128,7 +118,7 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     }
     try {
       const base64 = frameData.split(",")[1];
-      const res = await fetch("/api/analyze", {
+      const res = await fetch("/api/tab1/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageBase64: base64 }),
@@ -143,7 +133,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
           const map: Record<string, Patient> = Object.fromEntries(prev.map((p) => [`${p.cameraLabel}:${p.id}`, p]));
           for (const p of parsed.patients as Patient[]) {
             const exactKey = `${cameraLabel}:${p.id}`;
-            // prefer exact match, fall back to fuzzy match to avoid duplicates
             const key = map[exactKey] ? exactKey : (findSimilarKey(map, p.id, cameraLabel) ?? exactKey);
             map[key] = { ...p, cameraLabel, firstSeen: map[key]?.firstSeen || now, lastSeen: now };
           }
@@ -177,7 +166,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     const video = simVideoRef.current;
     if (!video) return;
 
-    // remove any prior ended listener
     if (simEndedHandlerRef.current) video.removeEventListener("ended", simEndedHandlerRef.current);
 
     video.src = `/video_samples/${filename}`;
@@ -187,20 +175,18 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     addEvent(`Simulating: ${filename}`, "info");
 
     simIntervalRef.current = setInterval(() => {
-      // skip if previous analysis still running — identical behavior to live feed
       if (simAnalyzingRef.current) return;
       const canvas = simCanvasRef.current;
       if (!video || !canvas || video.readyState < 2 || video.ended) return;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
-      canvas.width = 320; // increase if doing longer distance demo
-      canvas.height = 180; // increase if doing longer distance demo
+      canvas.width = 320;
+      canvas.height = 180;
       ctx.drawImage(video, 0, 0, 320, 180);
       const frameData = canvas.toDataURL("image/jpeg", 0.65);
       analyzeFrame("sim", filename, frameData);
     }, SAMPLE_INTERVAL_MS);
 
-    // when the video finishes its first pass: stop analysis, keep looping visually
     const handleEnded = () => {
       if (simIntervalRef.current) { clearInterval(simIntervalRef.current); simIntervalRef.current = null; }
       video.currentTime = 0;
@@ -258,7 +244,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     setActiveCameras((prev) => { const next = { ...prev }; delete next[deviceId]; return next; });
   }, [addEvent]);
 
-  // cleanup all cameras on unmount
   useEffect(() => () => {
     Object.values(activeCamerasRef.current).forEach((cam) => {
       cam.stream.getTracks().forEach((t) => t.stop());
@@ -272,9 +257,8 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
   }, []);
   const visible = patients.filter((p) => !dismissed.has(`${p.cameraLabel}:${p.id}`));
 
-  // html
   return (
-    <div style={{ fontFamily: "var(--font-sans)", minHeight: "100vh", background: "#09090f", color: "white" }}>
+    <div style={{ fontFamily: "var(--font-sans)", minHeight: "calc(100vh - 52px)", background: "#09090f", color: "white" }}>
       <style>{`
         @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
         .live-dot { animation: blink 1.2s ease infinite; }
@@ -282,10 +266,9 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
         .spin { animation: spin 1s linear infinite; }
       `}</style>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 440px", minHeight: "100vh" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 440px", minHeight: "calc(100vh - 52px)" }}>
         <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "16px", borderRight: "1px solid rgba(255,255,255,0.08)" }}>
 
-          {/* Camera selector — shows all detected devices, click to start/stop each */}
           <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", padding: "14px" }}>
             <div style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: "10px" }}>Available cameras</div>
             {devices.length === 0 ? (
@@ -305,7 +288,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
             )}
           </div>
 
-          {/* Simulate mode — play a video file through the same analysis pipeline */}
           {videoFiles.length > 0 && (
             <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", padding: "14px" }}>
               <div style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: "10px" }}>Simulate from video file</div>
@@ -323,7 +305,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
             </div>
           )}
 
-          {/* Live camera feeds grid — always rendered so simVideoRef is always mounted */}
           <div style={{ display: "grid", gridTemplateColumns: Object.values(activeCameras).length >= 1 ? "1fr 1fr" : "1fr", gap: "12px" }}>
             {Object.values(activeCameras).map((cam) => (
               <div key={cam.deviceId} style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
@@ -342,7 +323,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
               </div>
             ))}
 
-            {/* Simulation tile — always in DOM so ref is available; hidden via CSS when inactive */}
             <div style={{ display: simulating ? "block" : (Object.values(activeCameras).length === 0 ? "block" : "none"), background: "var(--color-background-secondary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden", position: "relative", aspectRatio: "16/9" }}>
               <video ref={simVideoRef} style={{ width: "100%", height: "100%", objectFit: "cover", display: simulating ? "block" : "none" }} muted playsInline />
               <canvas ref={simCanvasRef} style={{ display: "none" }} />
@@ -368,7 +348,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
             </div>
           </div>
 
-          {/* Event log */}
           <div style={{ background: "#0f1015", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: "14px", flex: 1 }}>
             <div style={{ fontSize: 12, color: "#475569", marginBottom: 10, fontWeight: 500 }}>Event log</div>
             {events.length === 0 ? (
@@ -384,7 +363,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
           </div>
         </div>
 
-        {/* Right panel — pretty patient cards */}
         <div style={{ padding: "20px", overflowY: "auto", background: "#07070e" }}>
           <Dashboard patients={visible} onDismiss={handleDismiss} />
         </div>
