@@ -39,12 +39,49 @@ export default function LiveFeed({
   useEffect(() => {
     let cancelled = false;
 
-    const stop = () => {
+    const captureOnce = () => {
+      const v = videoRef.current;
+      const c = canvasRef.current;
+      if (!v || !c) return;
+      if (v.readyState < 2 || v.videoWidth === 0) return;
+
+      const aspect = v.videoWidth / v.videoHeight;
+      let w = CAPTURE_WIDTH;
+      let h = Math.round(w / aspect);
+      if (h > CAPTURE_HEIGHT) {
+        h = CAPTURE_HEIGHT;
+        w = Math.round(h * aspect);
+      }
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext("2d");
+      if (!ctx) return;
+      ctx.drawImage(v, 0, 0, w, h);
+      const dataUrl = c.toDataURL("image/jpeg", 0.7);
+      const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, "");
+      const elapsed = (Date.now() - sessionStartRef.current) / 1000;
+      onFrameRef.current(base64, elapsed);
+    };
+
+    const startCaptureLoop = () => {
+      if (captureRef.current) return;
+      captureRef.current = setInterval(captureOnce, intervalMs);
+    };
+
+    const stopCaptureLoop = () => {
       if (captureRef.current) {
         clearInterval(captureRef.current);
         captureRef.current = null;
       }
+    };
+
+    const stop = () => {
+      stopCaptureLoop();
       if (streamRef.current) {
+        // Stop every track we ever obtained from getUserMedia. There is no
+        // browser API to enumerate "currently active" getUserMedia streams,
+        // so the only correct cleanup is for the holder of each MediaStream
+        // (us) to call .stop() on every track it obtained.
         streamRef.current.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
       }
@@ -52,6 +89,24 @@ export default function LiveFeed({
         videoRef.current.srcObject = null;
       }
       setReady(false);
+    };
+
+    // Pause the capture loop while the tab is hidden; the camera light stays
+    // on (track is still running) but we stop posting frames. Resume when
+    // the tab becomes visible again, but only if the session is still active.
+    const handleVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        stopCaptureLoop();
+      } else if (document.visibilityState === "visible" && active && sessionId) {
+        startCaptureLoop();
+      }
+    };
+
+    // Belt-and-suspenders: if the user closes the tab or navigates away
+    // without React getting a chance to unmount cleanly (back/forward cache,
+    // hard close, etc.), still release the camera.
+    const handlePageHide = () => {
+      stop();
     };
 
     if (!active || !sessionId) {
@@ -84,31 +139,9 @@ export default function LiveFeed({
           canvasRef.current = document.createElement("canvas");
         }
 
-        const captureOnce = () => {
-          const v = videoRef.current;
-          const c = canvasRef.current;
-          if (!v || !c) return;
-          if (v.readyState < 2 || v.videoWidth === 0) return;
-
-          const aspect = v.videoWidth / v.videoHeight;
-          let w = CAPTURE_WIDTH;
-          let h = Math.round(w / aspect);
-          if (h > CAPTURE_HEIGHT) {
-            h = CAPTURE_HEIGHT;
-            w = Math.round(h * aspect);
-          }
-          c.width = w;
-          c.height = h;
-          const ctx = c.getContext("2d");
-          if (!ctx) return;
-          ctx.drawImage(v, 0, 0, w, h);
-          const dataUrl = c.toDataURL("image/jpeg", 0.7);
-          const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, "");
-          const elapsed = (Date.now() - sessionStartRef.current) / 1000;
-          onFrameRef.current(base64, elapsed);
-        };
-
-        captureRef.current = setInterval(captureOnce, intervalMs);
+        if (document.visibilityState !== "hidden") {
+          startCaptureLoop();
+        }
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : String(err);
@@ -117,10 +150,17 @@ export default function LiveFeed({
       }
     };
 
+    document.addEventListener("visibilitychange", handleVisibility);
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("beforeunload", handlePageHide);
+
     start();
 
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibility);
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handlePageHide);
       stop();
     };
   }, [active, sessionId, intervalMs]);
