@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AnalysisEvent } from "@/app/lib/types";
 import SharedEventCard from "@/app/components/SharedEventCard";
 
@@ -17,11 +17,44 @@ function formatClock(iso: string): string {
   return `${hh}:${mm}:${ss}`;
 }
 
+/** Same visible “message” for back-to-back merge in the live log. */
+function isSameLogMessage(a: AnalysisEvent, b: AnalysisEvent): boolean {
+  return (
+    a.patientLabel === b.patientLabel &&
+    a.eventType === b.eventType &&
+    a.severity === b.severity &&
+    a.summary === b.summary
+  );
+}
+
+function mergeConsecutiveDuplicateLogs(
+  events: AnalysisEvent[],
+): Array<{ event: AnalysisEvent; timeLabel: string }> {
+  if (events.length === 0) return [];
+  const rows: Array<{ event: AnalysisEvent; timeLabel: string }> = [];
+  let i = 0;
+  while (i < events.length) {
+    const start = events[i];
+    let j = i + 1;
+    while (j < events.length && isSameLogMessage(start, events[j])) {
+      j++;
+    }
+    const end = events[j - 1];
+    const timeLabel =
+      j > i + 1
+        ? `${formatClock(start.createdAt)}–${formatClock(end.createdAt)}`
+        : formatClock(start.createdAt);
+    rows.push({ event: start, timeLabel });
+    i = j;
+  }
+  return rows;
+}
+
 const STICK_THRESHOLD_PX = 50;
 
 export default function LiveLogs({ events }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const topRef = useRef<HTMLDivElement | null>(null);
   const [autoStick, setAutoStick] = useState(true);
   const autoStickRef = useRef(autoStick);
 
@@ -29,16 +62,22 @@ export default function LiveLogs({ events }: Props) {
     autoStickRef.current = autoStick;
   }, [autoStick]);
 
+  /** Chronological merge, then newest-first for display. */
+  const mergedRows = useMemo(() => {
+    const merged = mergeConsecutiveDuplicateLogs(events);
+    return merged.slice().reverse();
+  }, [events]);
+
   useEffect(() => {
     if (!autoStickRef.current) return;
-    bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
-  }, [events.length]);
+    topRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [mergedRows.length]);
 
   const handleScroll = () => {
     const el = containerRef.current;
     if (!el) return;
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const stick = distanceFromBottom < STICK_THRESHOLD_PX;
+    const distanceFromTop = el.scrollTop;
+    const stick = distanceFromTop < STICK_THRESHOLD_PX;
     if (stick !== autoStickRef.current) setAutoStick(stick);
   };
 
@@ -57,25 +96,25 @@ export default function LiveLogs({ events }: Props) {
         onScroll={handleScroll}
         className="-mr-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-2"
       >
-        {events.map((evt) => (
+        <div ref={topRef} />
+        {mergedRows.map(({ event: evt, timeLabel }) => (
           <SharedEventCard
             key={evt.id}
             event={evt}
-            timeLabel={formatClock(evt.createdAt)}
+            timeLabel={timeLabel}
           />
         ))}
-        <div ref={bottomRef} />
       </div>
       {!autoStick && (
         <button
           type="button"
           onClick={() => {
             setAutoStick(true);
-            bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+            topRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
           }}
-          className="absolute bottom-2 right-2 rounded-full border border-white/20 bg-black/70 px-3 py-1 text-[11px] text-slate-200 shadow-lg backdrop-blur hover:bg-black/90"
+          className="absolute top-2 right-2 rounded-full border border-white/20 bg-black/70 px-3 py-1 text-[11px] text-slate-200 shadow-lg backdrop-blur hover:bg-black/90"
         >
-          ↓ Newest
+          ↑ Newest
         </button>
       )}
     </div>

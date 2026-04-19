@@ -9,6 +9,16 @@ export type EventType =
   | "fall"
   | "respiratory"
   | "agitation"
+  | "unresponsive"
+  | "anaphylaxis"
+  | "syncope"
+  | "vomiting"
+  | "cyanosis"
+  | "environmental"
+  | "violence"
+  | "hypoglycemia"
+  | "overdose"
+  | "pain_crisis"
   | "other"
   | "normal";
 
@@ -46,6 +56,8 @@ export interface LiveSession {
   startedAt: string;
   endedAt?: string;
   status: "active" | "ended";
+  /** Display label for the monitored patient; defaults to "Patient" when missing. */
+  patientLabel?: string;
 }
 
 export const SEVERITY_COLOR: Record<Severity, string> = {

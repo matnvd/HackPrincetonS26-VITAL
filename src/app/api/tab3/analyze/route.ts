@@ -1,3 +1,8 @@
+/**
+ * @deprecated Tab 3 live analysis now uses the Overshoot browser SDK; frames are
+ * not posted here. Kept for manual testing or legacy callers. Prefer POST
+ * /api/tab3/ingest with pre-structured JSON from RealtimeVision.
+ */
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { insert, readTable } from "@/app/lib/storage";
@@ -31,6 +36,16 @@ const VALID_EVENT_TYPES = new Set<EventType>([
   "fall",
   "respiratory",
   "agitation",
+  "unresponsive",
+  "anaphylaxis",
+  "syncope",
+  "vomiting",
+  "cyanosis",
+  "environmental",
+  "violence",
+  "hypoglycemia",
+  "overdose",
+  "pain_crisis",
   "other",
   "normal",
 ]);
@@ -53,7 +68,7 @@ Return ONLY JSON, no preamble, no fences:
   ]
 }
 
-eventType: choking|bleeding|seizure|cardiac|stroke|fall|respiratory|agitation|other|normal
+eventType: choking|bleeding|seizure|cardiac|stroke|fall|respiratory|agitation|unresponsive|anaphylaxis|syncope|vomiting|cyanosis|environmental|violence|hypoglycemia|overdose|pain_crisis|other|normal
 severity: normal|low|moderate|urgent|critical
 
 Only include severity != "normal". If nothing concerning: {"observations": []}.`;
