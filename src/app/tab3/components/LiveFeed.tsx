@@ -43,12 +43,22 @@ export interface LiveFeedHandle {
   stop: () => Promise<void>;
 }
 
+export interface LiveObservation {
+  eventType: string;
+  severity: string;
+  summary: string;
+  symptoms: string[];
+  confidence: number;
+  at: number;
+}
+
 interface Props {
   sessionId: string | null;
   active: boolean;
   /** If false, no browser MediaRecorder / upload (set from Live Monitor before Start). */
   enableRecording?: boolean;
   onError?: (err: Error) => void;
+  onObservation?: (obs: LiveObservation) => void;
 }
 
 const MAX_INFERENCE_LOGS = 200;
@@ -195,7 +205,7 @@ const STUB_NORMAL_EXAMPLES: Array<{
 ];
 
 const LiveFeed = forwardRef<LiveFeedHandle, Props>(function LiveFeed(
-  { sessionId, active, enableRecording = false, onError },
+  { sessionId, active, enableRecording = false, onError, onObservation },
   ref,
 ) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -208,11 +218,13 @@ const LiveFeed = forwardRef<LiveFeedHandle, Props>(function LiveFeed(
   const recorderStartMsRef = useRef<number | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const onErrorRef = useRef(onError);
+  const onObservationRef = useRef(onObservation);
+  useEffect(() => { onObservationRef.current = onObservation; }, [onObservation]);
   const sessionStartRef = useRef(Date.now());
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [inferenceLogs, setInferenceLogs] = useState<InferenceLogEntry[]>([]);
-  const inferenceLogBottomRef = useRef<HTMLDivElement | null>(null);
+  const inferenceLogContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     onErrorRef.current = onError;
@@ -382,6 +394,10 @@ const LiveFeed = forwardRef<LiveFeedHandle, Props>(function LiveFeed(
           inferenceLatencyMs: null,
         };
         setInferenceLogs((prev) => [...prev, stubEntry].slice(-MAX_INFERENCE_LOGS));
+        try {
+          const parsed = JSON.parse(resultJson) as { observation?: LiveObservation };
+          if (parsed.observation) onObservationRef.current?.({ ...parsed.observation, at: Date.now() });
+        } catch { /* ignore */ }
         const elapsed = (Date.now() - sessionStartRef.current) / 1000;
         void fetch("/api/tab3/ingest", {
           method: "POST",
@@ -490,6 +506,10 @@ const LiveFeed = forwardRef<LiveFeedHandle, Props>(function LiveFeed(
           console.warn("[LiveFeed] inference failed:", result.error);
           return;
         }
+        try {
+          const parsed = JSON.parse(result.result ?? "{}") as { observation?: LiveObservation };
+          if (parsed.observation) onObservationRef.current?.({ ...parsed.observation, at: Date.now() });
+        } catch { /* ignore */ }
         if (result.finish_reason === "length") {
           console.warn("[LiveFeed] output truncated — raise max tokens or clip settings");
         }
@@ -579,7 +599,8 @@ const LiveFeed = forwardRef<LiveFeedHandle, Props>(function LiveFeed(
 
   useEffect(() => {
     if (inferenceLogs.length === 0) return;
-    inferenceLogBottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    const el = inferenceLogContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   }, [inferenceLogs.length]);
 
   return (
@@ -624,7 +645,7 @@ const LiveFeed = forwardRef<LiveFeedHandle, Props>(function LiveFeed(
           <div className="shrink-0 border-b border-white/10 px-3 py-1.5 text-[10px] font-medium uppercase tracking-widest text-slate-500">
             Inference log (each clip / frame result)
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+          <div ref={inferenceLogContainerRef} className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
             {inferenceLogs.length === 0 ? (
               <div className="px-1 py-3 text-center text-[11px] text-slate-500">
                 {STUB_LIVE
@@ -662,7 +683,6 @@ const LiveFeed = forwardRef<LiveFeedHandle, Props>(function LiveFeed(
                     ) : null}
                   </li>
                 ))}
-                <div ref={inferenceLogBottomRef} />
               </ul>
             )}
           </div>

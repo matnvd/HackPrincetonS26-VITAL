@@ -6,9 +6,8 @@ import { fetchWithToast } from "@/app/lib/fetchWithToast";
 import SeverityFilterChips, {
   type SeverityFilter,
 } from "@/app/components/SeverityFilterChips";
-import LiveFeed, { type LiveFeedHandle } from "./LiveFeed";
+import LiveFeed, { type LiveFeedHandle, type LiveObservation } from "./LiveFeed";
 import LiveLogs from "./LiveLogs";
-import KeyEventsSummary from "./KeyEventsSummary";
 
 interface SessionInfo {
   id: string;
@@ -29,6 +28,7 @@ export default function LiveMonitor() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
+  const [latestObservation, setLatestObservation] = useState<LiveObservation | null>(null);
   const [patientLabelDraft, setPatientLabelDraft] = useState("");
   /** Opt-in before Start; if false, no MediaRecorder / upload for this session. */
   const [recordSession, setRecordSession] = useState(false);
@@ -257,6 +257,7 @@ export default function LiveMonitor() {
             setError(err.message);
             void shutdownLiveSession();
           }}
+          onObservation={setLatestObservation}
         />
 
         {error && (
@@ -309,14 +310,42 @@ export default function LiveMonitor() {
       <section className="flex min-h-0 flex-1 flex-col gap-4 p-6">
         <div className="flex flex-col gap-2">
           <div className="text-[10px] font-medium uppercase tracking-widest text-slate-500">
-            Key events
+            Current status
           </div>
-          <KeyEventsSummary events={sortedEvents} />
+          {latestObservation ? (
+            <div className="flex flex-col gap-1.5 rounded-md border border-white/10 bg-[#0c0c12] px-3 py-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-white capitalize">{latestObservation.eventType.replace(/_/g, " ")}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                  latestObservation.severity === "critical" ? "bg-red-500/20 text-red-300" :
+                  latestObservation.severity === "urgent" ? "bg-orange-500/20 text-orange-300" :
+                  latestObservation.severity === "moderate" ? "bg-yellow-500/20 text-yellow-300" :
+                  latestObservation.severity === "low" ? "bg-blue-500/20 text-blue-300" :
+                  "bg-emerald-500/20 text-emerald-300"
+                }`}>{latestObservation.severity}</span>
+              </div>
+              {latestObservation.summary && (
+                <p className="text-xs text-slate-400 leading-relaxed">{latestObservation.summary}</p>
+              )}
+              {latestObservation.symptoms.length > 0 && (
+                <div className="flex flex-wrap gap-1">
+                  {latestObservation.symptoms.map((s) => (
+                    <span key={s} className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-400">{s}</span>
+                  ))}
+                </div>
+              )}
+              <span className="text-[10px] text-slate-600">Updated {new Date(latestObservation.at).toLocaleTimeString()}</span>
+            </div>
+          ) : (
+            <div className="rounded-md border border-white/10 bg-[#0c0c12] px-3 py-4 text-center text-xs text-slate-500">
+              {active ? "Waiting for first inference…" : "Start a session to see live status."}
+            </div>
+          )}
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-2">
           <div className="flex items-center justify-between gap-2">
             <div className="text-[10px] font-medium uppercase tracking-widest text-slate-500">
-              Live log
+              Key events
             </div>
           </div>
           <SeverityFilterChips

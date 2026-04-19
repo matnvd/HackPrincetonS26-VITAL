@@ -54,7 +54,6 @@ const STICK_THRESHOLD_PX = 50;
 
 export default function LiveLogs({ events }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const topRef = useRef<HTMLDivElement | null>(null);
   const [autoStick, setAutoStick] = useState(true);
   const autoStickRef = useRef(autoStick);
 
@@ -70,7 +69,7 @@ export default function LiveLogs({ events }: Props) {
 
   useEffect(() => {
     if (!autoStickRef.current) return;
-    topRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+    containerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }, [mergedRows.length]);
 
   const handleScroll = () => {
@@ -96,8 +95,7 @@ export default function LiveLogs({ events }: Props) {
         onScroll={handleScroll}
         className="-mr-2 flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-2"
       >
-        <div ref={topRef} />
-        {mergedRows.map(({ event: evt, timeLabel }) => (
+{mergedRows.map(({ event: evt, timeLabel }) => (
           <SharedEventCard
             key={evt.id}
             event={evt}
@@ -110,7 +108,7 @@ export default function LiveLogs({ events }: Props) {
           type="button"
           onClick={() => {
             setAutoStick(true);
-            topRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+            containerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
           }}
           className="absolute top-2 right-2 rounded-full border border-white/20 bg-black/70 px-3 py-1 text-[11px] text-slate-200 shadow-lg backdrop-blur hover:bg-black/90"
         >

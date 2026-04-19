@@ -8,16 +8,6 @@ interface Props {
   events: AnalysisEvent[];
 }
 
-interface SummaryRow {
-  key: string;
-  firstAt: string;
-  latestAt: string;
-  count: number;
-  severity: Severity;
-  patientLabel: string;
-  eventType: string;
-}
-
 function formatClock(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
@@ -40,69 +30,61 @@ const SEVERITY_RANK: Record<Severity, number> = {
   critical: 4,
 };
 
-const DEDUPE_WINDOW_MS = 60_000;
-
 export default function KeyEventsSummary({ events }: Props) {
-  const rows = useMemo<SummaryRow[]>(() => {
-    const filtered = events
-      .filter((e) => e.severity === "critical" || e.severity === "urgent")
-      .slice()
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-
-    const out: SummaryRow[] = [];
-    for (const e of filtered) {
-      const t = new Date(e.createdAt).getTime();
-      const key = `${e.patientLabel}\u0000${e.eventType}`;
-      const prior = [...out].reverse().find((r) => r.key === key);
-      if (prior && t - new Date(prior.latestAt).getTime() <= DEDUPE_WINDOW_MS) {
-        prior.count += 1;
-        prior.latestAt = e.createdAt;
-        if (SEVERITY_RANK[e.severity] > SEVERITY_RANK[prior.severity]) {
-          prior.severity = e.severity;
-        }
-      } else {
-        out.push({
-          key,
-          firstAt: e.createdAt,
-          latestAt: e.createdAt,
-          count: 1,
-          severity: e.severity,
-          patientLabel: e.patientLabel,
-          eventType: e.eventType,
-        });
+  // Latest event per patient, sorted by highest severity first
+  const rows = useMemo(() => {
+    const byPatient = new Map<string, AnalysisEvent>();
+    for (const e of events) {
+      const existing = byPatient.get(e.patientLabel);
+      if (
+        !existing ||
+        e.createdAt > existing.createdAt
+      ) {
+        byPatient.set(e.patientLabel, e);
       }
     }
-    return out.reverse();
+    return [...byPatient.values()].sort(
+      (a, b) => SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity],
+    );
   }, [events]);
 
   if (rows.length === 0) {
     return (
       <div className="rounded-md border border-white/10 bg-[#0c0c12] px-3 py-4 text-center text-xs text-slate-500">
-        No critical or urgent events yet.
+        No patients monitored yet.
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-2">
       {rows.map((r) => (
         <div
-          key={`${r.key}-${r.firstAt}`}
-          className="flex items-center justify-between gap-3 rounded-md border border-white/10 bg-[#0c0c12] px-3 py-2"
+          key={r.patientLabel}
+          className="flex flex-col gap-1.5 rounded-md border border-white/10 bg-[#0c0c12] px-3 py-2.5"
         >
-          <div className="flex min-w-0 items-center gap-2.5">
-            <span className="font-mono text-[11px] text-slate-500">
-              {formatClock(r.latestAt)}
-            </span>
-            <span className="truncate text-sm font-medium text-white">{r.patientLabel}</span>
-            <span className="truncate text-xs text-slate-400">{sentenceCase(r.eventType)}</span>
-            {r.count > 1 && (
-              <span className="rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] font-mono text-slate-300">
-                ×{r.count}
-              </span>
-            )}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-sm font-medium text-white">{r.patientLabel}</span>
+              <span className="shrink-0 text-[11px] text-slate-500">{sentenceCase(r.eventType)}</span>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="font-mono text-[10px] text-slate-600">{formatClock(r.createdAt)}</span>
+              <SeverityBadge severity={r.severity} />
+            </div>
           </div>
-          <SeverityBadge severity={r.severity} />
+          {r.summary && (
+            <p className="text-xs text-slate-400 leading-relaxed">{r.summary}</p>
+          )}
+          {r.symptoms.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {r.symptoms.map((s) => (
+                <span key={s} className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-400">
+                  {s}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       ))}
     </div>
