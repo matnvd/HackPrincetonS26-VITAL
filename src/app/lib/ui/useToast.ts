@@ -33,8 +33,9 @@ function getSnapshot(): Toast[] {
   return toasts;
 }
 
+const EMPTY: Toast[] = [];
 function getServerSnapshot(): Toast[] {
-  return [];
+  return EMPTY;
 }
 
 export function useToasts(): Toast[] {
