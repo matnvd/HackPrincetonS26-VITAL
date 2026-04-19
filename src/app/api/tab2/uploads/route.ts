@@ -2,8 +2,9 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
-import { VIDEOS_DIR, insert, readTable } from "@/app/lib/storage";
+import { THUMBNAILS_DIR, VIDEOS_DIR, insert, readTable } from "@/app/lib/storage";
 import { startAnalysis } from "@/app/lib/analysisRunner";
+import { extractThumbnail, getDuration } from "@/app/lib/ffmpeg";
 import type { AnalysisEvent, Upload } from "@/app/lib/types";
 
 export const runtime = "nodejs";
@@ -41,10 +42,34 @@ export async function POST(req: Request) {
     const buf = Buffer.from(await file.arrayBuffer());
     await fs.writeFile(storagePath, buf);
 
+    let durationSeconds: number | undefined;
+    try {
+      durationSeconds = await getDuration(storagePath);
+    } catch (err) {
+      console.warn(
+        `[uploads POST] ffprobe failed (non-fatal, will retry in analyzer):`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+
+    let thumbnailPath: string | undefined;
+    try {
+      const thumb = path.join(THUMBNAILS_DIR, `${id}.jpg`);
+      await extractThumbnail(storagePath, thumb, 1);
+      thumbnailPath = thumb;
+    } catch (err) {
+      console.warn(
+        `[uploads POST] thumbnail extraction failed (non-fatal):`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+
     const row: Upload = {
       id,
       filename: file.name || `${id}${ext}`,
       storagePath,
+      durationSeconds,
+      thumbnailPath,
       status: "queued",
       createdAt: new Date().toISOString(),
     };
