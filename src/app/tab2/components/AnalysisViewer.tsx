@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AnalysisEvent, Upload, UploadStatus } from "@/app/lib/types";
+import { AnalysisViewerSkeleton } from "@/app/components/Skeletons";
 import VideoPlayer, { type VideoPlayerHandle } from "./VideoPlayer";
 import EventTimeline from "./EventTimeline";
 import EventLogs from "./EventLogs";
@@ -125,7 +126,7 @@ export default function AnalysisViewer({ uploadId, status }: Props) {
     );
   }
   if (!data) {
-    return <div className="text-xs text-slate-500">Loading…</div>;
+    return <AnalysisViewerSkeleton />;
   }
 
   return (

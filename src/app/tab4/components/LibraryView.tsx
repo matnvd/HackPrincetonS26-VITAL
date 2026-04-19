@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AnalysisViewer from "@/app/tab2/components/AnalysisViewer";
+import { UploadCardSkeletonGrid } from "@/app/components/Skeletons";
 import { fetchWithToast } from "@/app/lib/fetchWithToast";
 import type { LibraryRow } from "../types";
 import UploadCard from "./UploadCard";
@@ -103,7 +104,7 @@ export default function LibraryView() {
 
         <div className="-mr-2 flex min-h-0 flex-1 flex-col overflow-y-auto pr-2">
           {loading && uploads.length === 0 ? (
-            <div className="text-xs text-slate-500">Loading…</div>
+            <UploadCardSkeletonGrid count={6} />
           ) : error ? (
             <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
               {error}
