@@ -64,8 +64,8 @@ function PatientCard({ patient, index, onDismiss }: { patient: Patient; index: n
 
       <div className="flex-1 min-w-0 flex flex-col">
         <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: cfg.thumbBg, color: cfg.dot, border: `1px solid ${cfg.dot}35` }}>
-            P{index + 1}
+          <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md capitalize" style={{ background: cfg.thumbBg, color: cfg.dot, border: `1px solid ${cfg.dot}35` }}>
+            {patient.id}
           </span>
           <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1" style={{ background: cfg.badgeBg, color: cfg.badgeText, border: `1px solid ${cfg.dot}50` }}>
             <span className="w-1.5 h-1.5 rounded-full inline-block" style={{ background: cfg.dot }} />
