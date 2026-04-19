@@ -178,12 +178,34 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     setEvents((prev) => [{ time, msg, level }, ...prev].slice(0, 30));
   }, []);
 
+  const lastSpeakRef = useRef(0);
+  const speakAlert = useCallback(async (text: string) => {
+    const now = Date.now();
+    if (now - lastSpeakRef.current < 30_000) return; // 30-second cooldown between alerts
+    lastSpeakRef.current = now;
+    try {
+      const res = await fetch("/api/tab1/speak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      await audio.play();
+    } catch {
+      // TTS failure is non-critical, silently ignore
+    }
+  }, []);
+
   const captureFromVideo = useCallback((video: HTMLVideoElement, canvas: HTMLCanvasElement): string | null => {
     if (video.readyState < 2) return null;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
-    canvas.width = 480; // increase if doing longer distance demo
-    canvas.height = 270; // increase if doing longer distance demo
+    canvas.width = 400; // increase if doing longer distance demo
+    canvas.height = 225; // increase if doing longer distance demo
     ctx.drawImage(video, 0, 0, 320, 180);
     return canvas.toDataURL("image/jpeg", 0.65);
   }, []);
@@ -228,10 +250,16 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
           );
         });
         const critical = (parsed.patients as Patient[]).filter((p) => p.triage === "CRITICAL");
-        if (critical.length > 0)
+        if (critical.length > 0) {
           addEvent(`[${cameraLabel}] ALERT: ${critical.length} critical patient(s) detected`, "critical");
-        else
+          const spokenLabel = cameraLabel.replace(/\.[a-zA-Z0-9]+$/, "");
+          const msg = critical.length === 1
+            ? `Critical patient in ${spokenLabel}. ${critical[0].reason}. Immediate attention needed.`
+            : `${critical.length} critical patients in ${spokenLabel}. Immediate attention needed.`;
+          speakAlert(msg);
+        } else {
           addEvent(`[${cameraLabel}] ${parsed.patients.length} patient(s) detected`, "info");
+        }
       } else {
         addEvent(`[${cameraLabel}] No patients detected in frame`, "muted");
       }
@@ -246,7 +274,7 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
         setActiveCameras((s) => s[deviceId] ? { ...s, [deviceId]: { ...s[deviceId], analyzing: false } } : s);
       }
     }
-  }, [addEvent]);
+  }, [addEvent, speakAlert]);
 
   // stable callback refs so the worker onmessage closure never goes stale
   const analyzeFrameRef    = useRef(analyzeFrame);
