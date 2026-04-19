@@ -185,12 +185,28 @@ async function runYolo(bitmap: ImageBitmap): Promise<WorkerPose[]> {
   return decodeYoloPose(outTensor.data, outTensor.dims, scale, dx, dy, sw, sh);
 }
 
+// Serialize YOLO inference — concurrent session.run() calls on a single ONNX session
+// are unsafe (especially with WebGPU), so queue them one at a time.
+let yoloInferQueue: Promise<void> = Promise.resolve();
+function enqueueYolo(bitmap: ImageBitmap): Promise<WorkerPose[]> {
+  let resolve!: (poses: WorkerPose[]) => void;
+  const result = new Promise<WorkerPose[]>(r => { resolve = r; });
+  yoloInferQueue = yoloInferQueue.then(() => runYolo(bitmap).then(resolve).catch(() => resolve([])));
+  return result;
+}
+
 _self.addEventListener("message", async (e: MessageEvent) => {
   const msg = e.data as {
     type: string;
     id?: string;
     bitmap?: ImageBitmap;
   };
+
+  if (msg.type === "force-yolo") {
+    if (yoloSession) { mode = "yolo"; lowCountStreak = 0; }
+    else loadYolo().then(() => { mode = "yolo"; lowCountStreak = 0; }).catch(() => {});
+    return;
+  }
 
   if (msg.type === "load") {
     try {
@@ -210,7 +226,7 @@ _self.addEventListener("message", async (e: MessageEvent) => {
     const prevMode = mode;
 
     if (mode === "yolo" && yoloSession) {
-      poses = await runYolo(msg.bitmap);
+      poses = await enqueueYolo(msg.bitmap);
       if (poses.length < 3) {
         lowCountStreak++;
         if (lowCountStreak >= LOW_COUNT_SWITCH_FRAMES) {

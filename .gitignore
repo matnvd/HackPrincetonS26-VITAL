@@ -41,6 +41,7 @@ yarn-error.log*
 next-env.d.ts
 *.mp4
 *.mov
+/public/thumbnails
 
 # local storage + env
 /storage/

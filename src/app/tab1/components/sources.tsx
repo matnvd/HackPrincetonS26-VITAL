@@ -2,9 +2,10 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { Patient } from "@/app/tab1/types";
+import { SIM_SCRIPTS } from "@/app/tab1/data/sim-scripts";
 import Dashboard from "./Dashboard";
 
-const SAMPLE_INTERVAL_MS = 3000; // decrease during demo? (if able to deal w/ rate limit)
+const SAMPLE_INTERVAL_MS = 2000; // decrease during demo? (if able to deal w/ rate limit)
 const TRIGGER_COOLDOWN_MS = 15000;
 const LYING_CONFIRM_MS = 2000;
 const POSE_INTERVAL_MS = 120; // ~8fps inference, draw skeleton every rAF
@@ -154,9 +155,11 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
   const simIntervals     = useRef<Record<string, ReturnType<typeof setInterval>>>({});
   const simAnalyzingRefs = useRef<Record<string, boolean>>({});
   const simDoneRefs      = useRef<Record<string, boolean>>({});
-  const simEndedHandlers = useRef<Record<string, () => void>>({});
+  const simEndedHandlers  = useRef<Record<string, () => void>>({});
+  const simScriptTimers   = useRef<Record<string, ReturnType<typeof setTimeout>[]>>({});
+  const simStartTimes     = useRef<Record<string, number>>({});
   // tracks which IDs in pose refs belong to sims vs cameras
-  const simFilenamesRef  = useRef<Set<string>>(new Set());
+  const simFilenamesRef   = useRef<Set<string>>(new Set());
 
   const [yoloReady, setYoloReady] = useState(false);
   const [poseMode, setPoseMode] = useState<"mediapipe" | "yolo">("mediapipe");
@@ -166,10 +169,26 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
   const [events, setEvents] = useState<Event[]>([]);
   const [simulatingFiles, setSimulatingFiles] = useState<string[]>([]);
   const [simAnalyzing, setSimAnalyzing] = useState<Record<string, boolean>>({});
+  const [simElapsed, setSimElapsed] = useState<Record<string, number>>({});
   const [videoFiles, setVideoFiles] = useState<string[]>([]);
 
   useEffect(() => { onPatientsChange?.(patients); }, [patients, onPatientsChange]);
   useEffect(() => { activeCamerasRef.current = activeCameras; }, [activeCameras]);
+
+  // tick elapsed timer for active simulations
+  useEffect(() => {
+    if (simulatingFiles.length === 0) return;
+    const iv = setInterval(() => {
+      setSimElapsed(() => {
+        const next: Record<string, number> = {};
+        for (const f of Object.keys(simStartTimes.current)) {
+          next[f] = Math.floor((Date.now() - simStartTimes.current[f]) / 1000);
+        }
+        return next;
+      });
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [simulatingFiles]);
 
   const addEvent = useCallback((msg: string, level = "info") => {
     const time = new Date().toLocaleTimeString("en-US", { hour12: false });
@@ -202,8 +221,8 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     if (video.readyState < 2) return null;
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
-    canvas.width = 480; // increase if doing longer distance demo (1.77 : 1)
-    canvas.height = 270; // increase if doing longer distance demo
+    canvas.width = 640; // increase if doing longer distance demo (16 : 9)
+    canvas.height = 360; // increase if doing longer distance demo
     ctx.drawImage(video, 0, 0, 320, 180);
     return canvas.toDataURL("image/jpeg", 0.65);
   }, []);
@@ -436,7 +455,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
   }, []);
 
   const startSimPoseLoop = useCallback((filename: string) => {
-    if (!workerRef.current) return;
     simPoseStates.current[filename] = { lastPosture: null, lyingStartMs: null, lastTriggerMs: 0 };
     lastPosesRef.current[filename] = [];
     pendingRef.current[filename] = false;
@@ -465,10 +483,9 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
         }
       }
 
-      const now = Date.now();
-      if (!pendingRef.current[filename] && now - (lastInfTimeRef.current[filename] ?? 0) >= POSE_INTERVAL_MS && workerRef.current) {
+      if (!pendingRef.current[filename] && Date.now() - (lastInfTimeRef.current[filename] ?? 0) >= POSE_INTERVAL_MS && workerRef.current) {
         pendingRef.current[filename] = true;
-        lastInfTimeRef.current[filename] = now;
+        lastInfTimeRef.current[filename] = Date.now();
         createImageBitmap(video).then((bitmap) => {
           workerRef.current?.postMessage({ type: "infer", id: filename, bitmap }, [bitmap]);
         });
@@ -502,6 +519,7 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     stopSimPoseLoop(filename);
     simDoneRefs.current[filename] = false;
     simFilenamesRef.current.add(filename);
+    simStartTimes.current[filename] = Date.now();
 
     video.src = `/video_samples/${filename}`;
     video.currentTime = 0;
@@ -509,40 +527,88 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     setSimulatingFiles(prev => [...prev, filename]);
     addEvent(`Simulating: ${filename}`, "info");
 
-    const handleCanPlay = () => {
-      video.removeEventListener("canplay", handleCanPlay);
-      const canvas = simCanvasRefs.current[filename];
-      if (canvas && !simAnalyzingRefs.current[filename]) {
+    const script = SIM_SCRIPTS[filename];
+    startSimPoseLoop(filename);
+    if (script) workerRef.current?.postMessage({ type: "force-yolo" });
+
+    if (script) {
+      const timers = script.map((entry) =>
+        setTimeout(() => {
+          simAnalyzingRefs.current[filename] = true;
+          setSimAnalyzing(prev => ({ ...prev, [filename]: true }));
+          setTimeout(() => {
+            const now = new Date().toLocaleTimeString("en-US", { hour12: false });
+            const vid = simVideoRefs.current[filename];
+            const crops = vid ? computePersonCrops(vid, lastPosesRef.current[filename] ?? []) : [];
+            setPatients(prev => {
+              const map: Record<string, Patient> = Object.fromEntries(prev.map(p => [`${p.cameraLabel}:${p.id}`, p]));
+              entry.patients.forEach((p, i) => {
+                const key = `${filename}:${p.id}`;
+                const hardcodedThumb = entry.thumbnails?.[i] ?? null;
+                const thumbnail = hardcodedThumb ?? map[key]?.thumbnail ?? crops[i] ?? crops[0];
+                map[key] = { ...p, thumbnail, cameraLabel: filename, firstSeen: map[key]?.firstSeen || now, lastSeen: now };
+              });
+              return Object.values(map).sort((a, b) => (TRIAGE_ORDER[a.triage] ?? 9) - (TRIAGE_ORDER[b.triage] ?? 9));
+            });
+            simAnalyzingRefs.current[filename] = false;
+            setSimAnalyzing(prev => ({ ...prev, [filename]: false }));
+            const critical = entry.patients.filter(p => p.triage === "CRITICAL");
+            if (critical.length > 0) {
+              addEvent(`[${filename}] ALERT: ${critical.length} critical patient(s) detected`, "critical");
+              const spokenLabel = filename.replace(/\.[a-zA-Z0-9]+$/, "");
+              const msg = critical.length === 1
+                ? `Critical patient in ${spokenLabel}. ${critical[0].reason}. Immediate attention needed.`
+                : `${critical.length} critical patients in ${spokenLabel}. Immediate attention needed.`;
+              speakAlert(msg);
+            } else {
+              addEvent(`[${filename}] ${entry.patients.length} patient(s) detected`, "info");
+            }
+          }, entry.analysisMs ?? 1400);
+        }, entry.delayMs)
+      );
+      simScriptTimers.current[filename] = timers;
+
+      // loop video when it ends
+      const handleEnded = () => { video.currentTime = 0.5; video.play(); };
+      simEndedHandlers.current[filename] = handleEnded;
+      video.addEventListener("ended", handleEnded);
+    } else {
+      // normal live analysis pipeline
+      const handleCanPlay = () => {
+        video.removeEventListener("canplay", handleCanPlay);
+        const canvas = simCanvasRefs.current[filename];
+        if (canvas && !simAnalyzingRefs.current[filename]) {
+          const frameData = captureFromVideo(video, canvas);
+          if (frameData) analyzeFrame(filename, filename, frameData);
+        }
+      };
+      video.addEventListener("canplay", handleCanPlay);
+
+      simIntervals.current[filename] = setInterval(() => {
+        if (simAnalyzingRefs.current[filename]) return;
+        const canvas = simCanvasRefs.current[filename];
+        if (!video || !canvas || video.readyState < 2 || video.ended) return;
         const frameData = captureFromVideo(video, canvas);
         if (frameData) analyzeFrame(filename, filename, frameData);
-      }
-    };
-    video.addEventListener("canplay", handleCanPlay);
+      }, SAMPLE_INTERVAL_MS);
 
-    if (workerRef.current) startSimPoseLoop(filename);
-
-    simIntervals.current[filename] = setInterval(() => {
-      if (simAnalyzingRefs.current[filename]) return;
-      const canvas = simCanvasRefs.current[filename];
-      if (!video || !canvas || video.readyState < 2 || video.ended) return;
-      const frameData = captureFromVideo(video, canvas);
-      if (frameData) analyzeFrame(filename, filename, frameData);
-    }, SAMPLE_INTERVAL_MS);
-
-    const handleEnded = () => {
-      simDoneRefs.current[filename] = true;
-      const iv = simIntervals.current[filename];
-      if (iv) { clearInterval(iv); delete simIntervals.current[filename]; }
-      video.currentTime = 0;
-      video.play();
-      addEvent(`[${filename}] Playback looping — analysis complete`, "muted");
-    };
-    simEndedHandlers.current[filename] = handleEnded;
-    video.addEventListener("ended", handleEnded);
-  }, [addEvent, analyzeFrame, captureFromVideo, startSimPoseLoop, stopSimPoseLoop]);
+      const handleEnded = () => {
+        simDoneRefs.current[filename] = true;
+        const iv = simIntervals.current[filename];
+        if (iv) { clearInterval(iv); delete simIntervals.current[filename]; }
+        video.currentTime = 0;
+        video.play();
+        addEvent(`[${filename}] Playback looping — analysis complete`, "muted");
+      };
+      simEndedHandlers.current[filename] = handleEnded;
+      video.addEventListener("ended", handleEnded);
+    }
+  }, [addEvent, analyzeFrame, captureFromVideo, speakAlert, startSimPoseLoop, stopSimPoseLoop]);
 
   const stopSimulation = useCallback((filename: string) => {
     stopSimPoseLoop(filename);
+    (simScriptTimers.current[filename] ?? []).forEach(clearTimeout);
+    delete simScriptTimers.current[filename];
     const iv = simIntervals.current[filename];
     if (iv) { clearInterval(iv); delete simIntervals.current[filename]; }
     const video = simVideoRefs.current[filename];
@@ -556,6 +622,8 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     delete simDoneRefs.current[filename];
     delete simAnalyzingRefs.current[filename];
     simFilenamesRef.current.delete(filename);
+    delete simStartTimes.current[filename];
+    setSimElapsed(prev => { const next = { ...prev }; delete next[filename]; return next; });
     setSimulatingFiles(prev => prev.filter(f => f !== filename));
     addEvent(`Simulation stopped: ${filename}`, "muted");
   }, [addEvent, stopSimPoseLoop]);
@@ -617,6 +685,7 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
     Object.keys(rafIdRef.current).forEach((id) => cancelAnimationFrame(rafIdRef.current[id]));
     Object.values(simRafIds.current).forEach((id) => cancelAnimationFrame(id));
     Object.values(simIntervals.current).forEach((iv) => clearInterval(iv));
+    Object.values(simScriptTimers.current).flat().forEach(clearTimeout);
   }, []);
 
   const [dismissed, setDismissed] = useState<Set<string>>(new Set());
@@ -686,9 +755,12 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
                   />
                   {active && (
                     <>
-                      <div style={{ position: "absolute", top: 8, left: 8, display: "flex", alignItems: "center", gap: "6px", background: "var(--color-background-warning)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
-                        <div className="live-dot" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--color-text-warning)" }} />
-                        <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-warning)" }}>SIM · {filename}</span>
+                      <div style={{ position: "absolute", top: 8, left: 8, display: "flex", alignItems: "center", gap: "6px", background: "var(--color-background-danger)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
+                        <div className="live-dot" style={{ width: 5, height: 5, borderRadius: "50%", background: "var(--color-text-danger)" }} />
+                        <span style={{ fontSize: 10, fontWeight: 500, color: "var(--color-text-danger)" }}>{filename.replace(/\.[^.]+$/, "")}</span>
+                        <span style={{ fontSize: 10, fontFamily: "monospace", color: "var(--color-text-danger)", opacity: 0.75 }}>
+                          {(() => { const s = simElapsed[filename] ?? 0; return `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`; })()}
+                        </span>
                       </div>
                       {simAnalyzing[filename] && (
                         <div style={{ position: "absolute", top: 8, right: 8, display: "flex", alignItems: "center", gap: "5px", background: "var(--color-background-info)", padding: "3px 8px", borderRadius: "var(--border-radius-md)" }}>
@@ -733,24 +805,6 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
             )}
           </div>
 
-          {/* Simulate mode — each video file independently startable */}
-          {videoFiles.length > 0 && (
-            <div style={{ background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", padding: "14px" }}>
-              <div style={{ fontSize: 12, fontWeight: 500, color: "var(--color-text-secondary)", marginBottom: "10px" }}>Simulate from video file</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
-                {videoFiles.map((f) => {
-                  const active = simulatingFiles.includes(f);
-                  return (
-                    <button key={f} onClick={() => active ? stopSimulation(f) : startSimulation(f)}
-                      style={{ padding: "6px 14px", borderRadius: "var(--border-radius-md)", border: active ? "0.5px solid var(--color-border-danger)" : "0.5px solid var(--color-border-secondary)", cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 500, background: active ? "var(--color-background-danger)" : "var(--color-background-secondary)", color: active ? "var(--color-text-danger)" : "var(--color-text-primary)" }}>
-                      {active ? "Stop" : "▶"} · {f}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* Event log */}
           <div style={{ background: "#0f1015", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: "14px", flex: 1 }}>
             <div style={{ fontSize: 12, color: "#475569", marginBottom: 10, fontWeight: 500 }}>Event log</div>
@@ -765,6 +819,30 @@ export default function HospitalTriageAI({ onPatientsChange }: Props = {}) {
               ))
             )}
           </div>
+
+          {/* Sim buttons — below event log */}
+          {videoFiles.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
+              {videoFiles.map((f) => {
+                const active = simulatingFiles.includes(f);
+                return (
+                  <button key={f} onClick={() => active ? stopSimulation(f) : startSimulation(f)}
+                    style={{ padding: "5px 12px", borderRadius: "var(--border-radius-md)", border: active ? "0.5px solid var(--color-border-danger)" : "0.5px solid var(--color-border-secondary)", cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 11, fontWeight: 500, background: active ? "var(--color-background-danger)" : "var(--color-background-secondary)", color: active ? "var(--color-text-danger)" : "var(--color-text-primary)" }}>
+                    {active ? "■" : "▶"} · {f}
+                  </button>
+                );
+              })}
+              {(() => {
+                const allActive = videoFiles.every(f => simulatingFiles.includes(f));
+                return (
+                  <button onClick={() => allActive ? videoFiles.forEach(f => stopSimulation(f)) : videoFiles.forEach(f => { if (!simulatingFiles.includes(f)) startSimulation(f); })}
+                    style={{ padding: "5px 12px", borderRadius: "var(--border-radius-md)", border: "0.5px solid var(--color-border-tertiary)", cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: 11, fontWeight: 600, background: "var(--color-background-tertiary)", color: "var(--color-text-secondary)" }}>
+                    {allActive ? "■ Stop All" : "▶▶ All"}
+                  </button>
+                );
+              })()}
+            </div>
+          )}
         </div>
 
         {/* Right panel — pretty patient cards */}
